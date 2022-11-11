@@ -13,8 +13,7 @@ import org.apache.spark.SparkConf
 import org.apache.spark.SparkContext
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.functions.lit
-import org.apache.spark.sql.functions.when
+import org.apache.spark.sql.functions.{lit, to_timestamp, when}
 
 import java.net.URI
 import java.nio.file.Paths
@@ -497,8 +496,23 @@ class TableReader(clientConfig: ClientConfig) {
    * @return DataFrameWrapper object that contains their two dataframes unioned together and the table name.
    */
   private[cda] def reduceDataFrameWrappers(dataFrameWrapper1: DataFrameWrapper, dataFrameWrapper2: DataFrameWrapper): DataFrameWrapper = {
-    val dataFrame1 = dataFrameWrapper1.dataFrame
-    val dataFrame2 = dataFrameWrapper2.dataFrame
+    var dataFrame1 = dataFrameWrapper1.dataFrame
+    var dataFrame2 = dataFrameWrapper2.dataFrame
+
+    val fieldList2 = dataFrame2.schema.fields.toList
+
+    for (field <- dataFrame1.schema.fields) {
+      val otherIndex = dataFrame2.schema.fieldIndex(field.name)
+      val otherField = fieldList2.get(otherIndex)
+      if (!field.dataType.equals(otherField.dataType)) {
+        if ("timestamp".equals(field.dataType.typeName)) {
+          dataFrame2 = dataFrame2.withColumn(field.name, to_timestamp(dataFrame2.col(field.name)))
+        } else if ("timestamp".equals(otherField.dataType.typeName)) {
+          dataFrame1 = dataFrame1.withColumn(field.name, to_timestamp(dataFrame1.col(field.name)))
+        }
+      }
+    }
+
     val combinedDataFrame = dataFrame1.unionByName(dataFrame2)
 
     //Make a new instance and return it as the unionized DataFrame
