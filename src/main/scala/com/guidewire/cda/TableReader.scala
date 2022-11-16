@@ -62,8 +62,11 @@ class TableReader(clientConfig: ClientConfig) {
       }
   }
   conf.setMaster(sparkMaster)
-  conf.set("spark.sql.parquet.outputTimestampType", "TIMESTAMP_MICROS")
-  conf.set("spark.sql.autoBroadcastJoinThreshold", "-1")
+    .set("spark.sql.parquet.outputTimestampType", "TIMESTAMP_MICROS")
+    .set("spark.sql.autoBroadcastJoinThreshold", "-1")
+    .set("spark.executor.heartbeatInterval", "200000")
+    .set("spark.network.timeout", "300000")
+
   Option(clientConfig.sparkTuning)
     .foreach(sparkTuning => {
       // By default, Spark limits the maximum result size to 1GB, which is usually too small.
