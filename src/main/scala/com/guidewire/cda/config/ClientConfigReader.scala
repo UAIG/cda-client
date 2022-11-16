@@ -20,6 +20,7 @@ private[cda] case class OutputLocation(path: String)
 private[cda] case class SavepointsLocation(uri: String)
 
 private[cda] case class OutputSettings(tablesToInclude: String,
+                                       tablesToExclude: String,
                                        saveIntoJdbcRaw: Boolean,
                                        saveIntoJdbcMerged: Boolean,
                                        exportTarget: String,

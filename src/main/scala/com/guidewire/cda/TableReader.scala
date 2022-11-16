@@ -150,6 +150,10 @@ class TableReader(clientConfig: ClientConfig) {
 
       // Filter the manifestMap if this is run for specific tables.
       var tablesToInclude: String = Option(clientConfig.outputSettings.tablesToInclude).getOrElse("")
+      val tablesToExclude: Array[String] = Option(clientConfig.outputSettings.tablesToExclude)
+        .map(s => s.replaceAll(" ", "").split(","))
+        .getOrElse(Array.empty)
+
       //If command line argument is present, use it instead of yaml value.
       if (singleTableName.nonEmpty) {
         tablesToInclude = singleTableName
@@ -160,6 +164,10 @@ class TableReader(clientConfig: ClientConfig) {
         val tablesList = tablesToInclude.split(",")
         logMsg = logMsg + (s"""Including ONLY ${tablesList.size} table(s): $tablesToInclude""".stripMargin)
         useManifestMap = manifestMap.filterKeys(tablesList.contains)
+      }
+
+      if (tablesToExclude.nonEmpty) {
+        useManifestMap = manifestMap.filterKeys( k => !tablesToExclude.contains(k))
       }
 
       // Log user configs info we prepared above
