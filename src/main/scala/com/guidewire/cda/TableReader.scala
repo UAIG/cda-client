@@ -84,6 +84,10 @@ class TableReader(clientConfig: ClientConfig) {
   sc.hadoopConfiguration.set("fs.s3a.aws.credentials.provider", "com.amazonaws.auth.DefaultAWSCredentialsProviderChain")
   sc.setLogLevel("ERROR")
 
+  if (clientConfig.outputSettings.saveIntoJdbcMerged) {
+    Option(clientConfig.jdbcConnectionMerged).foreach(merged => {MergedConnectionPool.init(clientConfig)})
+  }
+
   def run(singleTableName: String = ""): Unit = {
 
     //Measure the total time

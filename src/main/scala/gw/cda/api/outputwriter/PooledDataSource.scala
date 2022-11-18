@@ -14,10 +14,10 @@ class PooledDataSource(val jdbcUrl: String, val username: String, val password: 
   config.addDataSourceProperty("cachePrepStmts", "true")
   config.addDataSourceProperty("prepStmtCacheSize", "250")
   config.addDataSourceProperty("prepStmtCacheSqlLimit", "2048")
-  config.addDataSourceProperty("autoCommit", "false")
+  config.addDataSourceProperty("autoCommit", false)
   private val ds = new HikariDataSource(config)
 
   @throws[SQLException]
-  def getConnection: Connection = ds.getConnection
+  def newConnection: Connection = ds.getConnection
 
 }

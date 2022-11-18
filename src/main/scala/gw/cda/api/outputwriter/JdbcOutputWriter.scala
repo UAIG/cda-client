@@ -50,8 +50,6 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
   private val DEFAULT_BATCH_SIZE: Long = 5000L
   protected val batchSize: Long = if (clientConfig.outputSettings.jdbcBatchSize <= 0) DEFAULT_BATCH_SIZE else clientConfig.outputSettings.jdbcBatchSize
 
-  private val mergedDataSource = new PooledDataSource(clientConfig.jdbcConnectionMerged.jdbcUrl, clientConfig.jdbcConnectionMerged.jdbcUsername, clientConfig.jdbcConnectionMerged.jdbcPassword)
-
   /**
    * Validate DB connection URL and credentials.
    */
@@ -121,7 +119,8 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
       } else {
         if (clientConfig.outputSettings.saveIntoJdbcMerged) {
           // Processing merged dataset only.
-          val mergedConn = mergedDataSource.getConnection
+          val mergedConn = MergedConnectionPool.newConnection()
+          mergedConn.setAutoCommit(false)
           try {
             this.writeJdbcMerged(tableDataFrameWrapperForMicroBatch, mergedConn)
             mergedConn.commit()
@@ -358,6 +357,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
     val insertDF = persistedTableDataframe
       .filter(col("gwcbi___operation").isin(2, 0))
       .drop(dropList: _*)
+//      .persist(StorageLevel.MEMORY_AND_DISK)
 
     // Log total rows to be inserted for this fingerprint.
     val insertCount = insertDF.count()
@@ -403,11 +403,13 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
 
     // Prepare and execute one insert statement per row in our insert dataframe.
     updateDataframe(connection, tableName, insertDF, insertSchema, insertStatement, batchSize, dialect, JdbcWriteType.Merged)
+//    insertDF.unpersist()
 
     // Filter for records to update.
     val updateDF = persistedTableDataframe
       .filter(col("gwcbi___operation").isin(4))
-      .cache()
+      .drop(dropList: _*)
+//      .persist(StorageLevel.MEMORY_AND_DISK)
 
     // Log total rows marked as updates.
     val updateCount = updateDF.count()
@@ -416,14 +418,6 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
     // Generate and apply update statements based on the latest transaction for each id.
     if (updateCount > 0) {
       // Get the list of columns
-
-      val latestUpdCnt = updateDF.count()
-      if (clientConfig.jdbcConnectionMerged.jdbcApplyLatestUpdatesOnly) {
-        // Log row count following the reduction to only last update for each id.
-        log.info(s"Merged - $tableName update count after agg to get latest for each id: ${latestUpdCnt.toString}")
-      } else {
-        log.info(s"Merged - $tableName all updates will be applied in sequence.")
-      }
 
       // Build the sql Update statement to be used as a prepared statement for the Updates.
       val colListForSetClause = updateDF.columns
@@ -439,12 +433,14 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
       // Prepare and execute one update statement per row in our update dataframe.
       updateDataframe(connection, tableName, updateDF, updateSchema, updateStatement, batchSize, dialect, JdbcWriteType.Merged)
     }
+//    updateDF.unpersist()
 
     // Filter for records to be deleted.
     // Deletes should be relatively rare since most data is retired in InsuranceSuite rather than deleted.
     val deleteDF = persistedTableDataframe
       .filter(col("gwcbi___operation").isin(1))
       .selectExpr("id")
+//      .persist(StorageLevel.MEMORY_AND_DISK)
 
     // Log number of records to be deleted.
     val deleteCount = deleteDF.count()
@@ -460,6 +456,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
 
       // Prepare and execute one delete statement per row in our delete dataframe.
       updateDataframe(connection, tableName, deleteDF, deleteSchema, deleteStatement, batchSize, dialect, JdbcWriteType.Merged)
+//      deleteDF.unpersist()
     }
     persistedTableDataframe.unpersist()
     log.info(s"+++ Finished merging '${tableDataFrameWrapperForMicroBatch.tableName}' data for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} as JDBC to ${clientConfig.jdbcConnectionMerged.jdbcUrl}")

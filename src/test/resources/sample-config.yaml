@@ -8,7 +8,7 @@ savepointsLocation:
 outputSettings:
   exportTarget: file
   saveIntoJdbcRaw: true
-  saveIntoJdbcMerged: true
+  saveIntoJdbcMerged: false
   fileFormat: csv
   includeColumnNames: true
   saveAsSingleFile: true
