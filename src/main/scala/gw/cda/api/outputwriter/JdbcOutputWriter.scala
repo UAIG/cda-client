@@ -3,7 +3,6 @@ package gw.cda.api.outputwriter
 import com.guidewire.cda.DataFrameWrapperForMicroBatch
 import com.guidewire.cda.config.ClientConfig
 import com.guidewire.cda.config.InvalidConfigParameterException
-import org.apache.spark.sql.{functions => sqlfun}
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.jdbc.JdbcDialect
 import org.apache.spark.sql.jdbc.JdbcType
@@ -50,6 +49,8 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
   private[outputwriter] val configLargeTextFields: Set[String] = Option(clientConfig.outputSettings.largeTextFields).getOrElse("").replace(" ", "").split(",").toSet
   private val DEFAULT_BATCH_SIZE: Long = 5000L
   protected val batchSize: Long = if (clientConfig.outputSettings.jdbcBatchSize <= 0) DEFAULT_BATCH_SIZE else clientConfig.outputSettings.jdbcBatchSize
+
+  private val mergedDataSource = new PooledDataSource(clientConfig.jdbcConnectionMerged.jdbcUrl, clientConfig.jdbcConnectionMerged.jdbcUsername, clientConfig.jdbcConnectionMerged.jdbcPassword)
 
   /**
    * Validate DB connection URL and credentials.
@@ -120,19 +121,18 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
       } else {
         if (clientConfig.outputSettings.saveIntoJdbcMerged) {
           // Processing merged dataset only.
-          val mergedConn = DriverManager.getConnection(clientConfig.jdbcConnectionMerged.jdbcUrl, clientConfig.jdbcConnectionMerged.jdbcUsername, clientConfig.jdbcConnectionMerged.jdbcPassword)
-          mergedConn.setAutoCommit(false) // Everything in the same db transaction.
+          val mergedConn = mergedDataSource.getConnection
           try {
             this.writeJdbcMerged(tableDataFrameWrapperForMicroBatch, mergedConn)
+            mergedConn.commit()
           } catch {
             case e: Exception =>
               mergedConn.rollback()
-              mergedConn.close()
               log.info(s"Merged - ROLLBACK '$tableName' for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} - $e - ${clientConfig.jdbcConnectionMerged.jdbcUrl}")
               throw e
+          } finally {
+            mergedConn.close()
           }
-          mergedConn.commit()
-          mergedConn.close()
         }
       }
     }
@@ -358,7 +358,6 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
     val insertDF = persistedTableDataframe
       .filter(col("gwcbi___operation").isin(2, 0))
       .drop(dropList: _*)
-      .persist(StorageLevel.MEMORY_AND_DISK)
 
     // Log total rows to be inserted for this fingerprint.
     val insertCount = insertDF.count()
@@ -404,11 +403,11 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
 
     // Prepare and execute one insert statement per row in our insert dataframe.
     updateDataframe(connection, tableName, insertDF, insertSchema, insertStatement, batchSize, dialect, JdbcWriteType.Merged)
-    insertDF.unpersist()
 
     // Filter for records to update.
     val updateDF = persistedTableDataframe
       .filter(col("gwcbi___operation").isin(4))
+      .cache()
 
     // Log total rows marked as updates.
     val updateCount = updateDF.count()
@@ -417,35 +416,8 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
     // Generate and apply update statements based on the latest transaction for each id.
     if (updateCount > 0) {
       // Get the list of columns
-      val colNamesArray = updateDF.columns.toBuffer
-      // Remove the id and sequence from the list of columns so we can handle them separately.
-      // We will be grouping by the id and the sequence will be set as the first item in the list of columns.
-      colNamesArray --= Array("id")
-      val colNamesString = colNamesArray.mkString(",")
 
-      val latestChangeForEachID = if (clientConfig.jdbcConnectionMerged.jdbcApplyLatestUpdatesOnly) {
-        // Find the latest change for each id based on the gwcbi___seqval_hex.
-        // Note: For nested structs, max on struct is computed as
-        // max on first struct field, if equal fall back to second fields, and so on.
-        // In this case the first struct field is gwcbi___seqval_hex which will be always
-        // be unique for each instance of an id in the group.
-        updateDF
-          .selectExpr(Seq("id", s"struct($colNamesString) as otherCols"): _*)
-          .groupBy("id").agg(sqlfun.max("otherCols").as("latest"))
-          .selectExpr("latest.*", "id", "latest.gwcbi___seqval_hex as hexseqvalue")
-          .drop(dropList: _*)
-          .persist(StorageLevel.MEMORY_AND_DISK)
-      } else {
-        // Retain all updates.  Sort so they are applied in the correct order.
-        val colVar = colNamesString + ",id, gwcbi___seqval_hex as hexseqvalue"
-        updateDF
-          .selectExpr(colVar.split(","): _*)
-          .sort(col("gwcbi___seqval_hex").asc)
-          .drop(dropList: _*)
-          .persist(StorageLevel.MEMORY_AND_DISK)
-      }
-
-      val latestUpdCnt = latestChangeForEachID.count()
+      val latestUpdCnt = updateDF.count()
       if (clientConfig.jdbcConnectionMerged.jdbcApplyLatestUpdatesOnly) {
         // Log row count following the reduction to only last update for each id.
         log.info(s"Merged - $tableName update count after agg to get latest for each id: ${latestUpdCnt.toString}")
@@ -454,7 +426,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
       }
 
       // Build the sql Update statement to be used as a prepared statement for the Updates.
-      val colListForSetClause = latestChangeForEachID.columns
+      val colListForSetClause = updateDF.columns
         .filter(_ != "id")
         .filter(_ != "hexseqvalue")
       val colNamesForSetClause = colListForSetClause.map("\"" + _ + "\" = ?").mkString(", ")
@@ -462,11 +434,10 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
       log.info(s"Merged - $updateStatement")
 
       // Get schema info required for updatePartition call.
-      val updateSchema = latestChangeForEachID.schema
+      val updateSchema = updateDF.schema
 
       // Prepare and execute one update statement per row in our update dataframe.
-      updateDataframe(connection, tableName, latestChangeForEachID, updateSchema, updateStatement, batchSize, dialect, JdbcWriteType.Merged)
-      latestChangeForEachID.unpersist()
+      updateDataframe(connection, tableName, updateDF, updateSchema, updateStatement, batchSize, dialect, JdbcWriteType.Merged)
     }
 
     // Filter for records to be deleted.
@@ -474,8 +445,6 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
     val deleteDF = persistedTableDataframe
       .filter(col("gwcbi___operation").isin(1))
       .selectExpr("id")
-      .persist(StorageLevel.MEMORY_AND_DISK)
-    persistedTableDataframe.unpersist()
 
     // Log number of records to be deleted.
     val deleteCount = deleteDF.count()
@@ -491,8 +460,8 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
 
       // Prepare and execute one delete statement per row in our delete dataframe.
       updateDataframe(connection, tableName, deleteDF, deleteSchema, deleteStatement, batchSize, dialect, JdbcWriteType.Merged)
-      deleteDF.unpersist()
     }
+    persistedTableDataframe.unpersist()
     log.info(s"+++ Finished merging '${tableDataFrameWrapperForMicroBatch.tableName}' data for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} as JDBC to ${clientConfig.jdbcConnectionMerged.jdbcUrl}")
   }
 

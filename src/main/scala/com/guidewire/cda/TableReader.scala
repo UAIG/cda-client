@@ -305,57 +305,62 @@ class TableReader(clientConfig: ClientConfig) {
         val timestampSubfolderLocationsForTableParallel = timestampSubfolderLocationsForTable.par
         // Fetch all the files in parallel
         val startReadTime = tableStopwatch.getTime
-        val allDataFrameWrappersForTable: Iterable[DataFrameWrapper] = timestampSubfolderLocationsForTableParallel.map(fetchDataFrameForTableTimestampSubfolder).seq
+        val allDataFrameWrappersForTable: List[DataFrameWrapper] = timestampSubfolderLocationsForTableParallel.map(fetchDataFrameForTableTimestampSubfolder).toList
         val fullReadTime = tableStopwatch.getTime - startReadTime
         log.info(s"Downloaded all data for fingerprint '$schemaFingerprint' for table '$tableName', took ${(fullReadTime / 1000.0).toString} seconds")
 
-        // Combine all DataFrames for the table to one DataFrame
-        val startReduceTime = tableStopwatch.getTime
-        val dataFrameForTable: DataFrame = reduceTimestampSubfolderDataFrames(tableName, allDataFrameWrappersForTable)
-        val fullReduceTime = tableStopwatch.getTime - startReduceTime
-        log.info(s"Reduce DataFrames for table '$tableName' for fingerprint '$schemaFingerprint', took ${(fullReduceTime / 1000.0).toString} seconds")
+        var schemaCheckDone: Boolean = false
+        var fileNum: Integer = 0
 
-        val schemasAreConsistent: Boolean = outputWriter.schemasAreConsistent(dataFrameForTable, tableName, schemaFingerprint, spark)
-
-        if (schemasAreConsistent) {
-          // Write each table and its schema to the configured output type(s) (CSV, Parquet, JDBC) to the configured location
-          val startWriteTime = tableStopwatch.getTime
-          val manifestTimestampForTable = manifestMap(tableName).lastSuccessfulWriteTimestamp
-          val schemaFingerprintTimestamp = manifestMap(tableName).schemaHistory.getOrElse(schemaFingerprint, "unknown")
-          val tableDataFrameWrapperForMicroBatch = DataFrameWrapperForMicroBatch(tableName, schemaFingerprint, schemaFingerprintTimestamp, manifestTimestampForTable, dataFrameForTable)
-          outputWriter.write(tableDataFrameWrapperForMicroBatch)
-          val fullWriteTime = tableStopwatch.getTime - startWriteTime
-          log.info(s"Wrote data for table '$tableName' for fingerprint '$schemaFingerprint', took ${(fullWriteTime / 1000.0).toString} seconds")
-
-          // Get a list of all fingerprints that follow the one we are processing.
-          val manifestEntry = manifestMap(tableName)
-          val fingerprintsAfterCurrent = manifestEntry.schemaHistory
-            .map({ case (schemaFingerprint, timestamp) => (schemaFingerprint, timestamp.toLong) })
-            .filter({ case (_, timestamp) => timestamp > schemaFingerprintTimestamp.toLong })
-            .toList
-            .sortBy({ case (_, timestamp) => timestamp })
-
-          // Log a warning message listing any additional fingerprints for this table
-          // that are not being processed.
-          if (clientConfig.outputSettings.exportTarget == "jdbc" && fingerprintsAfterCurrent.nonEmpty) {
-            val bypassedFingerprintsList = fingerprintsAfterCurrent.map({ case (schemaFingerprint, _) => schemaFingerprint })
-            log.warn(
-              s"""
-                 | $tableName fingerprint(s) were not processed in this load: ${bypassedFingerprintsList.toString.stripPrefix("List(").stripSuffix(")")}
-                 |   Only one fingerprint per table can be processed at a time.""")
+        for (dataFrameForTable <- allDataFrameWrappersForTable) {
+          fileNum = fileNum + 1
+          var schemasAreConsistent = false
+          if (!schemaCheckDone) {
+            schemasAreConsistent = outputWriter.schemasAreConsistent(dataFrameForTable.dataFrame, tableName, schemaFingerprint, spark)
+            schemaCheckDone = true
           }
 
-          // If loading to jdbc target, only one Fingerprint will be processed at a time.
-          // If loading files (CSV, Parquet), all Fingerprints are loaded.
-          // Savepoints logic will be different for those scenarios.
-          //    * If loading jdbc, use the last timestamp folder actually written.
-          //    * If loading files, use the lastSuccessfulWriteTimestamp for that table from manifest.json.
-          if(clientConfig.outputSettings.exportTarget=="jdbc") {
-            savepointsProcessor.writeSavepoints(tableName, maxTimestamp.toString)
-          } else {
-            savepointsProcessor.writeSavepoints(tableName, manifestTimestampForTable)
+          if (schemasAreConsistent) {
+            // Write each table and its schema to the configured output type(s) (CSV, Parquet, JDBC) to the configured location
+            val startWriteTime = tableStopwatch.getTime
+            val manifestTimestampForTable = manifestMap(tableName).lastSuccessfulWriteTimestamp
+            val schemaFingerprintTimestamp = manifestMap(tableName).schemaHistory.getOrElse(schemaFingerprint, "unknown")
+            val tableDataFrameWrapperForMicroBatch = DataFrameWrapperForMicroBatch(tableName, schemaFingerprint, schemaFingerprintTimestamp, manifestTimestampForTable, dataFrameForTable.dataFrame)
+            outputWriter.write(tableDataFrameWrapperForMicroBatch)
+            val fullWriteTime = tableStopwatch.getTime - startWriteTime
+            log.info(s"Wrote data file ${fileNum}/${allDataFrameWrappersForTable.size} for table '${tableName}' for fingerprint '${schemaFingerprint}', took ${(fullWriteTime / 1000.0).toString} seconds")
+
+            // Get a list of all fingerprints that follow the one we are processing.
+            val manifestEntry = manifestMap(tableName)
+            val fingerprintsAfterCurrent = manifestEntry.schemaHistory
+              .map({ case (schemaFingerprint, timestamp) => (schemaFingerprint, timestamp.toLong) })
+              .filter({ case (_, timestamp) => timestamp > schemaFingerprintTimestamp.toLong })
+              .toList
+              .sortBy({ case (_, timestamp) => timestamp })
+
+            // Log a warning message listing any additional fingerprints for this table
+            // that are not being processed.
+            if (clientConfig.outputSettings.exportTarget == "jdbc" && fingerprintsAfterCurrent.nonEmpty) {
+              val bypassedFingerprintsList = fingerprintsAfterCurrent.map({ case (schemaFingerprint, _) => schemaFingerprint })
+              log.warn(
+                s"""
+                   | $tableName fingerprint(s) were not processed in this load: ${bypassedFingerprintsList.toString.stripPrefix("List(").stripSuffix(")")}
+                   |   Only one fingerprint per table can be processed at a time.""")
+            }
+
+            // If loading to jdbc target, only one Fingerprint will be processed at a time.
+            // If loading files (CSV, Parquet), all Fingerprints are loaded.
+            // Savepoints logic will be different for those scenarios.
+            //    * If loading jdbc, use the last timestamp folder actually written.
+            //    * If loading files, use the lastSuccessfulWriteTimestamp for that table from manifest.json.
+            if(clientConfig.outputSettings.exportTarget=="jdbc") {
+              savepointsProcessor.writeSavepoints(tableName, maxTimestamp.toString)
+            } else {
+              savepointsProcessor.writeSavepoints(tableName, manifestTimestampForTable)
+            }
           }
         }
+
 
         //Stop the StopWatch, and print out the results
         tableStopwatch.stop()
