@@ -32,7 +32,7 @@ object JdbcWriteType extends Enumeration {
 
 private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientConfig) extends OutputWriter {
 
-  private[outputwriter] val configLargeTextFields: Set[String] = Option(clientConfig.outputSettings.largeTextFields).getOrElse("").replace(" ", "").split(",").toSet
+  private[outputwriter] val configLargeTextFields: Set[String] = Option(clientConfig.outputSettings.largeTextFields).getOrElse("").replaceAll(" ", "").toLowerCase(Locale.US).split(",").toSet
   private val DEFAULT_BATCH_SIZE: Long = 5000L
   protected val batchSize: Long = if (clientConfig.outputSettings.jdbcBatchSize <= 0) DEFAULT_BATCH_SIZE else clientConfig.outputSettings.jdbcBatchSize
 
@@ -548,7 +548,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
     val fieldDataTypeDefinition = if (fieldDataType == StringType) {
 
       val tableNameNoSchema = tableName.substring(tableName.indexOf(".") + 1)
-      val currentTableColumn = (tableNameNoSchema+"."+fieldName)
+      val currentTableColumn = (tableNameNoSchema+"."+fieldName).toLowerCase(Locale.US)
       if (configLargeTextFields.contains(currentTableColumn)) largeStringDataType
       else stringDataType
     }
