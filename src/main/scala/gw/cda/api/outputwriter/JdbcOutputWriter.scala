@@ -6,25 +6,11 @@ import com.guidewire.cda.config.InvalidConfigParameterException
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.jdbc.JdbcDialect
 import org.apache.spark.sql.jdbc.JdbcType
-import org.apache.spark.sql.types.ArrayType
-import org.apache.spark.sql.types.BinaryType
-import org.apache.spark.sql.types.BooleanType
-import org.apache.spark.sql.types.ByteType
-import org.apache.spark.sql.types.DataType
-import org.apache.spark.sql.types.DateType
-import org.apache.spark.sql.types.DecimalType
-import org.apache.spark.sql.types.DoubleType
-import org.apache.spark.sql.types.FloatType
-import org.apache.spark.sql.types.IntegerType
-import org.apache.spark.sql.types.LongType
-import org.apache.spark.sql.types.ShortType
-import org.apache.spark.sql.types.StringType
-import org.apache.spark.sql.types.TimestampType
+import org.apache.spark.sql.types.{ArrayType, BinaryType, BooleanType, ByteType, DataType, DateType, DecimalType, DoubleType, FloatType, IntegerType, LongType, ShortType, StringType, StructType, TimestampType}
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.jdbc.JdbcDialects
-import org.apache.spark.sql.types.StructType
 import org.apache.spark.storage.StorageLevel
 
 import java.sql.Connection
@@ -328,7 +314,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
     log.info(s"Raw - $insertStatement")
 
     // Prepare and execute one insert statement per row in our insert dataframe.
-    updateDataframe(connection, tableName, insertDF, insertSchema, insertStatement, batchSize, dialect, JdbcWriteType.Raw)
+    updateDataframe(connection, tableName, insertDF, insertSchema, insertStatement, batchSize, dialect, JdbcWriteType.Raw, setUpdateCriteria = false)
     insertDF.unpersist()
     log.info(s"*** Finished writing '${tableDataFrameWrapperForMicroBatch.tableName}' raw data data for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} as JDBC to ${clientConfig.jdbcConnectionRaw.jdbcUrl}")
   }
@@ -402,7 +388,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
     log.info(s"Merged - $insertStatement")
 
     // Prepare and execute one insert statement per row in our insert dataframe.
-    updateDataframe(connection, tableName, insertDF, insertSchema, insertStatement, batchSize, dialect, JdbcWriteType.Merged)
+    updateDataframe(connection, tableName, insertDF, insertSchema, insertStatement, batchSize, dialect, JdbcWriteType.Merged, setUpdateCriteria = false)
 //    insertDF.unpersist()
 
     // Filter for records to update.
@@ -422,7 +408,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
       // Build the sql Update statement to be used as a prepared statement for the Updates.
       val colListForSetClause = updateDF.columns
         .filter(_ != "id")
-        .filter(_ != "hexseqvalue")
+
       val colNamesForSetClause = colListForSetClause.map("\"" + _ + "\" = ?").mkString(", ")
       val updateStatement = s"""UPDATE $tableName SET $colNamesForSetClause WHERE "id" = ? AND "gwcbi___seqval_hex" < ? """
       log.info(s"Merged - $updateStatement")
@@ -431,7 +417,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
       val updateSchema = updateDF.schema
 
       // Prepare and execute one update statement per row in our update dataframe.
-      updateDataframe(connection, tableName, updateDF, updateSchema, updateStatement, batchSize, dialect, JdbcWriteType.Merged)
+      updateDataframe(connection, tableName, updateDF, updateSchema, updateStatement, batchSize, dialect, JdbcWriteType.Merged, setUpdateCriteria = true)
     }
 //    updateDF.unpersist()
 
@@ -455,7 +441,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
       log.info(s"Merged - $deleteStatement")
 
       // Prepare and execute one delete statement per row in our delete dataframe.
-      updateDataframe(connection, tableName, deleteDF, deleteSchema, deleteStatement, batchSize, dialect, JdbcWriteType.Merged)
+      updateDataframe(connection, tableName, deleteDF, deleteSchema, deleteStatement, batchSize, dialect, JdbcWriteType.Merged, setUpdateCriteria = false)
 //      deleteDF.unpersist()
     }
     persistedTableDataframe.unpersist()
@@ -637,7 +623,8 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
                               updateStmt: String,
                               batchSize: Long,
                               dialect: JdbcDialect,
-                              jdbcWriteType: JdbcWriteType.Value): Unit = {
+                              jdbcWriteType: JdbcWriteType.Value,
+                              setUpdateCriteria: Boolean): Unit = {
     var completed = false
     var totalRowCount = 0L
     val dbProductName = conn.getMetaData.getDatabaseProductName
@@ -659,13 +646,39 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
         var rowCount = 0
         df.toLocalIterator().asScala.foreach { row =>
           var i = 0
+          var columnIndex = 1
+          var idFieldIndex = -1
+          var seqhexFieldIndex = -1
           while (i < numFields) {
-            if (row.isNullAt(i)) {
-              stmt.setNull(i + 1, nullTypes(i))
+            if (setUpdateCriteria && "id".equalsIgnoreCase(rddSchema.fields(i).name)) {
+              idFieldIndex = i;
             } else {
-              setters(i).apply(stmt, row, i)
+              if ("gwcbi___seqval_hex".equalsIgnoreCase(rddSchema.fields{i}.name)) {
+                seqhexFieldIndex = i;
+              }
+
+              if (row.isNullAt(i)) {
+                stmt.setNull(columnIndex, nullTypes(i))
+              } else {
+                setters(i).apply(stmt, row, i, columnIndex)
+              }
+              columnIndex = columnIndex + 1
             }
             i = i + 1
+          }
+
+          // set criteria columns for the update statement
+          if (setUpdateCriteria) {
+            if (idFieldIndex != -1) {
+              makeSetter(conn, dialect, rddSchema.fields(idFieldIndex).dataType).apply(stmt, row, idFieldIndex, columnIndex)
+              columnIndex = columnIndex + 1
+            }
+            if (seqhexFieldIndex != -1) {
+              makeSetter(conn, dialect, rddSchema.fields(seqhexFieldIndex).dataType).apply(stmt, row, seqhexFieldIndex, columnIndex)
+            } else {
+              stmt.setLong(columnIndex, Long.MaxValue)
+            }
+            columnIndex = columnIndex + 1
           }
 
           stmt.addBatch()
@@ -688,6 +701,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
       completed = true
     } catch {
       case e: SQLException =>
+        log.error(s"Error executing statement: '${updateStmt}' for values: [${rddSchema.fields.map(f => f.name).mkString(", ")}] with error: ${e.getMessage}")
         val cause = e.getCause
         val nextCause = e.getNextException
         if (nextCause != null && cause != nextCause) {
@@ -754,61 +768,61 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
    * in the SQL statement and also used for the value in `Row`.
    * private type JDBCValueSetter = (PreparedStatement, Row, Int) => Unit
    */
-  private type JDBCValueSetter = (PreparedStatement, Row, Int) => Unit
+  private type JDBCValueSetter = (PreparedStatement, Row, Int, Int) => Unit
 
   private def makeSetter(
                           conn: Connection,
                           dialect: JdbcDialect,
                           dataType: DataType): JDBCValueSetter = dataType match {
     case IntegerType      =>
-      (stmt: PreparedStatement, row: Row, pos: Int) =>
-        stmt.setInt(pos + 1, row.getInt(pos))
+      (stmt: PreparedStatement, row: Row, dataPos: Int, colPos: Int) =>
+        stmt.setInt(colPos, row.getInt(dataPos))
     case LongType         =>
-      (stmt: PreparedStatement, row: Row, pos: Int) =>
-        stmt.setLong(pos + 1, row.getLong(pos))
+      (stmt: PreparedStatement, row: Row, dataPos: Int, colPos: Int) =>
+        stmt.setLong(colPos, row.getLong(dataPos))
     case DoubleType       =>
-      (stmt: PreparedStatement, row: Row, pos: Int) =>
-        stmt.setDouble(pos + 1, row.getDouble(pos))
+      (stmt: PreparedStatement, row: Row, dataPos: Int, colPos: Int) =>
+        stmt.setDouble(colPos, row.getDouble(dataPos))
     case FloatType        =>
-      (stmt: PreparedStatement, row: Row, pos: Int) =>
-        stmt.setFloat(pos + 1, row.getFloat(pos))
+      (stmt: PreparedStatement, row: Row, dataPos: Int, colPos: Int) =>
+        stmt.setFloat(colPos, row.getFloat(dataPos))
     case ShortType        =>
-      (stmt: PreparedStatement, row: Row, pos: Int) =>
-        stmt.setInt(pos + 1, row.getShort(pos))
+      (stmt: PreparedStatement, row: Row, dataPos: Int, colPos: Int) =>
+        stmt.setInt(colPos, row.getShort(dataPos))
     case ByteType         =>
-      (stmt: PreparedStatement, row: Row, pos: Int) =>
-        stmt.setInt(pos + 1, row.getByte(pos))
+      (stmt: PreparedStatement, row: Row, dataPos: Int, colPos: Int) =>
+        stmt.setInt(colPos, row.getByte(dataPos))
     case BooleanType      =>
-      (stmt: PreparedStatement, row: Row, pos: Int) =>
-        stmt.setBoolean(pos + 1, row.getBoolean(pos))
+      (stmt: PreparedStatement, row: Row, dataPos: Int, colPos: Int) =>
+        stmt.setBoolean(colPos, row.getBoolean(dataPos))
     case StringType       =>
-      (stmt: PreparedStatement, row: Row, pos: Int) =>
-        stmt.setString(pos + 1, row.getString(pos))
+      (stmt: PreparedStatement, row: Row, dataPos: Int, colPos: Int) =>
+        stmt.setString(colPos, row.getString(dataPos))
     case BinaryType       =>
-      (stmt: PreparedStatement, row: Row, pos: Int) =>
-        stmt.setBytes(pos + 1, row.getAs[Array[Byte]](pos))
+      (stmt: PreparedStatement, row: Row, dataPos: Int, colPos: Int) =>
+        stmt.setBytes(colPos, row.getAs[Array[Byte]](dataPos))
     case TimestampType    =>
-      (stmt: PreparedStatement, row: Row, pos: Int) =>
-        stmt.setTimestamp(pos + 1, row.getAs[java.sql.Timestamp](pos))
+      (stmt: PreparedStatement, row: Row, dataPos: Int, colPos: Int) =>
+        stmt.setTimestamp(colPos, row.getAs[java.sql.Timestamp](dataPos))
     case DateType         =>
-      (stmt: PreparedStatement, row: Row, pos: Int) =>
-        stmt.setDate(pos + 1, row.getAs[java.sql.Date](pos))
+      (stmt: PreparedStatement, row: Row, dataPos: Int, colPos: Int) =>
+        stmt.setDate(colPos, row.getAs[java.sql.Date](dataPos))
     case t: DecimalType   =>
-      (stmt: PreparedStatement, row: Row, pos: Int) =>
-        stmt.setBigDecimal(pos + 1, row.getDecimal(pos))
+      (stmt: PreparedStatement, row: Row, dataPos: Int, colPos: Int) =>
+        stmt.setBigDecimal(colPos, row.getDecimal(dataPos))
     case ArrayType(et, _) =>
       // remove type length parameters from end of type name
       val typeName = getJdbcType(et, dialect).databaseTypeDefinition
         .toLowerCase(Locale.ROOT).split("\\(")(0)
-      (stmt: PreparedStatement, row: Row, pos: Int) =>
+      (stmt: PreparedStatement, row: Row, dataPos: Int, colPos: Int) =>
         val array = conn.createArrayOf(
           typeName,
-          row.getSeq[AnyRef](pos).toArray)
-        stmt.setArray(pos + 1, array)
+          row.getSeq[AnyRef](dataPos).toArray)
+        stmt.setArray(colPos, array)
     case _                =>
-      (_: PreparedStatement, _: Row, pos: Int) =>
+      (_: PreparedStatement, _: Row, dataPos: Int, colPos: Int) =>
         throw new IllegalArgumentException(
-          s"Can't translate non-null value for field $pos")
+          s"Can't translate non-null value for field $dataPos")
   }
 
 }
