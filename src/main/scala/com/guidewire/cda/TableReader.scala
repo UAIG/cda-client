@@ -17,6 +17,7 @@ import org.apache.spark.sql.functions.{lit, to_timestamp, when}
 
 import java.net.URI
 import java.nio.file.Paths
+import java.util.Locale
 import java.util.concurrent.atomic.AtomicInteger
 import scala.collection.JavaConversions._
 
@@ -158,7 +159,7 @@ class TableReader(clientConfig: ClientConfig) {
       // Filter the manifestMap if this is run for specific tables.
       var tablesToInclude: String = Option(clientConfig.outputSettings.tablesToInclude).getOrElse("")
       val tablesToExclude: Array[String] = Option(clientConfig.outputSettings.tablesToExclude)
-        .map(s => s.replaceAll(" ", "").split(","))
+        .map(s => s.replaceAll(" ", "").toLowerCase(Locale.US).split(","))
         .getOrElse(Array.empty)
 
       //If command line argument is present, use it instead of yaml value.
@@ -167,7 +168,7 @@ class TableReader(clientConfig: ClientConfig) {
       }
 
       if (tablesToInclude.nonEmpty) {
-        tablesToInclude = tablesToInclude.replace(" ", "")
+        tablesToInclude = tablesToInclude.replaceAll(" ", "").toLowerCase(Locale.US)
         val tablesList = tablesToInclude.split(",")
         logMsg = logMsg + (s"""Including ONLY ${tablesList.size} table(s): $tablesToInclude""".stripMargin)
         useManifestMap = manifestMap.filterKeys(tablesList.contains)
@@ -305,18 +306,12 @@ class TableReader(clientConfig: ClientConfig) {
         val tableStopwatch = new StopWatch()
         tableStopwatch.start()
 
-        // Setup the parallel threads to handle concurrent processing for this table/job
-        val timestampSubfolderLocationsForTableParallel = timestampSubfolderLocationsForTable.par
-        // Fetch all the files in parallel
-        val startReadTime = tableStopwatch.getTime
-        val allDataFrameWrappersForTable: List[DataFrameWrapper] = timestampSubfolderLocationsForTableParallel.map(fetchDataFrameForTableTimestampSubfolder).toList
-        val fullReadTime = tableStopwatch.getTime - startReadTime
-        log.info(s"Downloaded all data for fingerprint '$schemaFingerprint' for table '$tableName', took ${(fullReadTime / 1000.0).toString} seconds")
-
         var schemaCheckDone: Boolean = false
         var fileNum: Integer = 0
 
-        for (dataFrameForTable <- allDataFrameWrappersForTable) {
+        val allDataFrameWrappersForTable = timestampSubfolderLocationsForTable.toSeq.sortBy(_.subfolderTimestamp)
+        for (tableLocation <- allDataFrameWrappersForTable) {
+          val dataFrameForTable = fetchDataFrameForTableTimestampSubfolder(tableLocation)
           fileNum = fileNum + 1
           var schemasAreConsistent = false
           if (!schemaCheckDone) {
