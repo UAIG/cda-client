@@ -83,10 +83,10 @@ class TableReader(clientConfig: ClientConfig) {
 
   sc.hadoopConfiguration.set("fs.file.impl", classOf[org.apache.hadoop.fs.LocalFileSystem].getName)
   sc.hadoopConfiguration.set("fs.s3a.aws.credentials.provider", "com.amazonaws.auth.DefaultAWSCredentialsProviderChain")
-  sc.setLogLevel("ERROR")
+  //sc.setLogLevel("INFO")
 
   if (clientConfig.outputSettings.saveIntoJdbcMerged) {
-    Option(clientConfig.jdbcConnectionMerged).foreach(merged => {MergedConnectionPool.init(clientConfig)})
+    Option(clientConfig.jdbcConnectionMerged).foreach(_ => {MergedConnectionPool.init(clientConfig)})
   }
 
   def run(singleTableName: String = ""): Unit = {
