@@ -9,8 +9,8 @@ import gw.cda.api.outputwriter.OutputWriterConfig
 import gw.cda.api.utils.S3ClientSupplier
 import org.apache.commons.lang.time.StopWatch
 import org.apache.logging.log4j.LogManager
-import org.apache.spark.SparkConf
-import org.apache.spark.SparkContext
+import org.apache.spark.{SparkConf, SparkContext, SparkEnv}
+import org.apache.spark.metrics.source.{MergedJDBCMetricsSource, ReaderMetricsSource, HikariMetricsSource}
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.functions.{lit, to_timestamp, when}
@@ -41,7 +41,8 @@ case class DataFrameWrapperForMicroBatch(tableName: String,
                                          schemaFingerprint: String,
                                          schemaFingerprintTimestamp: String,
                                          manifestTimestamp: String,
-                                         dataFrame: DataFrame)
+                                         dataFrame: DataFrame,
+                                         batchMetricsExpectedUpdates: Long)
 
 
 
@@ -52,7 +53,7 @@ class TableReader(clientConfig: ClientConfig) {
 
   // https://spark.apache.org/docs/latest/configuration.html
   private[cda] val conf: SparkConf = new SparkConf()
-  conf.setAppName("Cloud Data Access Client")
+  conf.setAppName("CdaClient")
   private val sparkMaster = clientConfig.performanceTuning.sparkMaster match {
     case "yarn"      => clientConfig.performanceTuning.sparkMaster
     case "local" | _ =>
@@ -78,6 +79,14 @@ class TableReader(clientConfig: ClientConfig) {
       Option(sparkTuning.driverMemory).foreach(conf.set("spark.driver.memory", _))
     })
 
+  if (clientConfig.metricsSettings.sinkSettings != null) {
+    clientConfig.metricsSettings.sinkSettings.foreach((kv) => if (kv._1.nonEmpty) conf.set(s"spark.metrics.conf.*.${kv._1}", kv._2))
+  }
+
+  if (clientConfig.sparkSettings != null) {
+    clientConfig.sparkSettings.foreach((kv) => if (kv._1.nonEmpty) conf.set(kv._1, kv._2))
+  }
+
   private[cda] val spark: SparkSession = SparkSession.builder.config(conf).getOrCreate
   private[cda] val sc: SparkContext = spark.sparkContext
 
@@ -85,8 +94,18 @@ class TableReader(clientConfig: ClientConfig) {
   sc.hadoopConfiguration.set("fs.s3a.aws.credentials.provider", "com.amazonaws.auth.DefaultAWSCredentialsProviderChain")
   //sc.setLogLevel("INFO")
 
+  val hikariMetricsSource = new HikariMetricsSource(sc)
+  val cdaReaderMetricsSource = new ReaderMetricsSource(sc)
+  val cdaMergedJDBCMetricsSource = new MergedJDBCMetricsSource(sc)
+
   if (clientConfig.outputSettings.saveIntoJdbcMerged) {
-    Option(clientConfig.jdbcConnectionMerged).foreach(_ => {MergedConnectionPool.init(clientConfig)})
+    Option(clientConfig.jdbcConnectionMerged).foreach(_ => {MergedConnectionPool.init(clientConfig, hikariMetricsSource)})
+  }
+
+  if (SparkEnv.get != null) {
+    SparkEnv.get.metricsSystem.registerSource(hikariMetricsSource)
+    SparkEnv.get.metricsSystem.registerSource(cdaReaderMetricsSource)
+    SparkEnv.get.metricsSystem.registerSource(cdaMergedJDBCMetricsSource)
   }
 
   def run(singleTableName: String = ""): Unit = {
@@ -105,7 +124,7 @@ class TableReader(clientConfig: ClientConfig) {
       val saveAsSingleFile = clientConfig.outputSettings.saveAsSingleFile
       val saveIntoTimestampDirectory = clientConfig.outputSettings.saveIntoTimestampDirectory
       val outputWriterConfig = OutputWriterConfig(Paths.get(outputPath).toAbsolutePath.toUri, includeColumnNames, saveAsSingleFile, saveIntoTimestampDirectory, clientConfig)
-      val outputWriter = OutputWriter(outputWriterConfig)
+      val outputWriter = OutputWriter(outputWriterConfig, cdaMergedJDBCMetricsSource)
       outputWriter.validate()
 
       // Reading manifestMap JSON from S3
@@ -113,6 +132,9 @@ class TableReader(clientConfig: ClientConfig) {
       val manifestKey = clientConfig.sourceLocation.manifestKey
       val manifestMap: ManifestMap = ManifestReader.processManifest(bucketName, manifestKey)
       var useManifestMap = manifestMap
+
+      cdaReaderMetricsSource.manifest_table_count_history.update(manifestMap.size)
+
       //.-("") //TODO Make a block-list for tables configurable
 
       // Prepare user configs log msg
@@ -184,6 +206,7 @@ class TableReader(clientConfig: ClientConfig) {
       // Iterate over the manifestMap, and process each table
       log.info("Calculating all the files to fetch, based on the manifest timestamps; this might take a few seconds...")
 
+      // Prepare copy jobs. Finding all table fingerprints to process for all tables from the manifest is done first
       val copyJobs = useManifestMap
         .map({ case (tableName, manifestEntry) =>
           // For each entry in the manifestMap, map the table name to s3 url
@@ -260,7 +283,8 @@ class TableReader(clientConfig: ClientConfig) {
         fingerprintsAvailable
       } else {
         var fingerprintToReturn: Iterable[String] = None: Iterable[String]
-        val firstFingerprintInList = fingerprintsAvailable.toSeq.get(0)
+        val firstFingerprintInList = fingerprintsAvailable.
+          toSeq.get(0)
         val nextReadPointKey = if (lastReadPoint.isDefined) { s"${baseUri.getKey}$firstFingerprintInList/${lastReadPoint.get.toLong + 1}"} else { null }
         val listObjectsRequest = new ListObjectsRequest(baseUri.getBucket, s"${baseUri.getKey}$firstFingerprintInList/", nextReadPointKey, "/", null)
         val objectList = S3ClientSupplier.s3Client.listObjects(listObjectsRequest)
@@ -307,12 +331,37 @@ class TableReader(clientConfig: ClientConfig) {
         tableStopwatch.start()
 
         var schemaCheckDone: Boolean = false
-        var fileNum: Integer = 0
 
         val allDataFrameWrappersForTable = timestampSubfolderLocationsForTable.toSeq.sortBy(_.subfolderTimestamp)
         for (tableLocation <- allDataFrameWrappersForTable) {
-          val dataFrameForTable = fetchDataFrameForTableTimestampSubfolder(tableLocation)
-          fileNum = fileNum + 1
+
+          val fetchStartTime = tableStopwatch.getTime
+          val dataFrameForTable = try {
+            fetchDataFrameForTableTimestampSubfolder(tableLocation)
+          } catch {
+            case e: Exception => {
+              cdaReaderMetricsSource.data_read_error_counter.inc()
+              throw e
+            }
+          }
+          val batchMetrics = if (clientConfig.metricsSettings.batchMetricsValidationEnabled) {
+            try {
+              fetchBatchMetricsForTableTimestampSubfolder(tableLocation)
+            } catch {
+              case e: Exception => {
+                cdaReaderMetricsSource.batch_metrics_read_error_counter.inc()
+                if (!clientConfig.metricsSettings.ignoreBatchMetricsErrors) {
+                  throw e
+                }
+                log.warn("Error fetching batch-metrics", e)
+                Option.empty
+              }
+            }
+          } else {
+            Option.empty
+          }
+          cdaReaderMetricsSource.timestamp_fetch_time_history.update(tableStopwatch.getTime - fetchStartTime)
+
           var schemasAreConsistent = false
           if (!schemaCheckDone) {
             schemasAreConsistent = outputWriter.schemasAreConsistent(dataFrameForTable.dataFrame, tableName, schemaFingerprint, spark)
@@ -324,10 +373,17 @@ class TableReader(clientConfig: ClientConfig) {
             val startWriteTime = tableStopwatch.getTime
             val manifestTimestampForTable = manifestMap(tableName).lastSuccessfulWriteTimestamp
             val schemaFingerprintTimestamp = manifestMap(tableName).schemaHistory.getOrElse(schemaFingerprint, "unknown")
-            val tableDataFrameWrapperForMicroBatch = DataFrameWrapperForMicroBatch(tableName, schemaFingerprint, schemaFingerprintTimestamp, manifestTimestampForTable, dataFrameForTable.dataFrame)
+            val tableDataFrameWrapperForMicroBatch = DataFrameWrapperForMicroBatch(tableName, schemaFingerprint, schemaFingerprintTimestamp, manifestTimestampForTable, dataFrameForTable.dataFrame, batchMetrics.map(_.numRecordsWritten).getOrElse({ -1L}))
             outputWriter.write(tableDataFrameWrapperForMicroBatch)
             val fullWriteTime = tableStopwatch.getTime - startWriteTime
-            log.info(s"Wrote data file ${fileNum}/${allDataFrameWrappersForTable.size} for table '${tableName}' for fingerprint '${schemaFingerprint}', took ${(fullWriteTime / 1000.0).toString} seconds")
+            cdaReaderMetricsSource.timestamp_write_time_history.update(fullWriteTime)
+            // only count batch metrics for records that were written
+            batchMetrics.foreach(bm => {
+              cdaReaderMetricsSource.batch_metrics_dropped_counter.inc(bm.numRecordsDropped)
+              cdaReaderMetricsSource.batch_metrics_written_counter.inc(bm.numRecordsWritten)
+              cdaReaderMetricsSource.batch_metrics_read_counter.inc(bm.numRecordsRead)
+            })
+            log.info(s"Wrote data file ${allDataFrameWrappersForTable.size} for table '${tableName}' for fingerprint '${schemaFingerprint}', took ${(fullWriteTime / 1000.0).toString} seconds")
 
             // Get a list of all fingerprints that follow the one we are processing.
             val manifestEntry = manifestMap(tableName)
@@ -363,6 +419,7 @@ class TableReader(clientConfig: ClientConfig) {
 
         //Stop the StopWatch, and print out the results
         tableStopwatch.stop()
+        cdaReaderMetricsSource.table_process_time_history.update(tableStopwatch.getTime)
         log.info(s"Processed '$tableName' for fingerprint '$schemaFingerprint', took ${(tableStopwatch.getTime / 1000.0).toString} seconds")
       })
       .getOrElse(log.info(s"Skipping '$tableName' for fingerprint '$schemaFingerprint', no new data found"))
@@ -448,6 +505,25 @@ class TableReader(clientConfig: ClientConfig) {
 
     val dataFrameWrapper = manageDataFrameColumns(dataFrame, tableTimestampSubfolderInfo)
     dataFrameWrapper
+  }
+
+  /**
+   * Read batch metrics for this table timestamp foler.
+   *
+   * @param tableTimestampSubfolderInfo TimestampSubfolderInfo corresponding to a timestamp subfolder for some table
+   * @return The parsed batch-metrics
+   */
+  private[cda] def fetchBatchMetricsForTableTimestampSubfolder(tableTimestampSubfolderInfo: TableS3LocationWithTimestampInfo): Option[BatchMetrics] = {
+    val s3URI = tableTimestampSubfolderInfo.timestampSubfolderURI
+    val s3aURL = s"s3a://${s3URI.getBucket}/${s3URI.getKey}.cda/batch-metrics.json"
+    log.info(s"Reading '${tableTimestampSubfolderInfo.tableName}' batch-metrics from $s3aURL, on thread ${Thread.currentThread()}")
+    val dataFrame = spark.sqlContext.read.textFile(s3aURL)
+
+    if (dataFrame.isEmpty) {
+      Option.empty
+    } else {
+      Option.apply(BatchMetricsReader.readBatchMetrics(dataFrame.first()))
+    }
   }
 
   /** Function that takes a DataFrame corresponding to some table and manages the addition and removal of

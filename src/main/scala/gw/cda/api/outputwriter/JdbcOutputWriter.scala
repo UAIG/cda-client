@@ -3,6 +3,7 @@ package gw.cda.api.outputwriter
 import com.guidewire.cda.DataFrameWrapperForMicroBatch
 import com.guidewire.cda.config.ClientConfig
 import com.guidewire.cda.config.InvalidConfigParameterException
+import org.apache.spark.metrics.source.MergedJDBCMetricsSource
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.jdbc.JdbcDialect
 import org.apache.spark.sql.jdbc.JdbcType
@@ -30,7 +31,11 @@ object JdbcWriteType extends Enumeration {
   val Merged = Value("Merged")
 }
 
-private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientConfig) extends OutputWriter {
+case class JdbcUpdateResult(updateStatementCount: Long, updatedRowCount: Long) {}
+
+case class MicroBatchUpdateResult(insertResult: JdbcUpdateResult, updateResult: JdbcUpdateResult, deleteResult: JdbcUpdateResult) {}
+
+private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientConfig, cdaMergedJDBCMetricsSource: MergedJDBCMetricsSource) extends OutputWriter {
 
   private[outputwriter] val configLargeTextFields: Set[String] = Option(clientConfig.outputSettings.largeTextFields).getOrElse("").replaceAll(" ", "").toLowerCase(Locale.US).split(",").toSet
   private val DEFAULT_BATCH_SIZE: Long = 5000L
@@ -56,36 +61,36 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
       // rollback both connections to keep them in sync.
       val rawConn = DriverManager.getConnection(clientConfig.jdbcConnectionRaw.jdbcUrl, clientConfig.jdbcConnectionRaw.jdbcUsername, clientConfig.jdbcConnectionRaw.jdbcPassword)
       rawConn.setAutoCommit(false) // Everything in the same db transaction.
-      val mergedConn = DriverManager.getConnection(clientConfig.jdbcConnectionMerged.jdbcUrl, clientConfig.jdbcConnectionMerged.jdbcUsername, clientConfig.jdbcConnectionMerged.jdbcPassword)
+      val mergedConn = MergedConnectionPool.newConnection()
       mergedConn.setAutoCommit(false)
       try {
-        this.writeJdbcRaw(tableDataFrameWrapperForMicroBatch, rawConn)
-      } catch {
-        case e: Exception =>
-          rawConn.rollback()
-          rawConn.close()
-          log.info(s"Raw - ROLLBACK '$tableName' for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} - $e - ${clientConfig.jdbcConnectionRaw.jdbcUrl}")
-          mergedConn.close()
-          throw e
+        try {
+          this.writeJdbcRaw(tableDataFrameWrapperForMicroBatch, rawConn)
+        } catch {
+          case e: Exception =>
+            rawConn.rollback()
+            log.info(s"Raw - ROLLBACK '$tableName' for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} - $e - ${clientConfig.jdbcConnectionRaw.jdbcUrl}")
+            throw e
+        }
+        try {
+          this.writeJdbcMerged(tableDataFrameWrapperForMicroBatch, mergedConn)
+        } catch {
+          case e: Exception =>
+            cdaMergedJDBCMetricsSource.data_write_error_counter.inc()
+            rawConn.rollback()
+            log.info(s"Raw - ROLLBACK '$tableName' for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} - ${clientConfig.jdbcConnectionRaw.jdbcUrl}")
+            mergedConn.rollback()
+            log.info(s"Merged - ROLLBACK '$tableName' for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} - $e - ${clientConfig.jdbcConnectionMerged.jdbcUrl}")
+            throw e
+        }
+        // Commit both connections.
+        rawConn.commit()
+        mergedConn.commit()
+      } finally {
+        // Close both connections.
+        mergedConn.close()
+        rawConn.close()
       }
-      try {
-        this.writeJdbcMerged(tableDataFrameWrapperForMicroBatch, mergedConn)
-      } catch {
-        case e: Exception =>
-          rawConn.rollback()
-          rawConn.close()
-          log.info(s"Raw - ROLLBACK '$tableName' for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} - ${clientConfig.jdbcConnectionRaw.jdbcUrl}")
-          mergedConn.rollback()
-          mergedConn.close()
-          log.info(s"Merged - ROLLBACK '$tableName' for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} - $e - ${clientConfig.jdbcConnectionMerged.jdbcUrl}")
-          throw e
-      }
-      // Commit both connections.
-      rawConn.commit()
-      mergedConn.commit()
-      // Close both connections.
-      rawConn.close()
-      mergedConn.close()
     } else {
       if (clientConfig.outputSettings.saveIntoJdbcRaw) {
         // Processing raw dataset only.
@@ -112,6 +117,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
             mergedConn.commit()
           } catch {
             case e: Exception =>
+              cdaMergedJDBCMetricsSource.data_write_error_counter.inc()
               mergedConn.rollback()
               log.info(s"Merged - ROLLBACK '$tableName' for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} - $e - ${clientConfig.jdbcConnectionMerged.jdbcUrl}")
               throw e
@@ -198,7 +204,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
       fileSchemaDef.foreach(field => if (!scala.util.Try(tableDataFrame(field.name)).isSuccess) {
         val columnDefinition = buildDDLColumnDefinition(dialect, dbProductName.toString, tableName, field.name, field.dataType, field.nullable)
         val alterTableStatement = s"ALTER TABLE $jdbcSchemaName.$tableName ADD $columnDefinition"
-        log.warn(s"Statement to be executed: $alterTableStatement")
+        log.info(s"Statement to be executed: $alterTableStatement")
         try {
           // Execute the table create DDL
           val stmt = databaseConnection.createStatement
@@ -206,7 +212,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
           stmt.close()
           databaseConnection.commit()
           newColumnAdded = true
-          log.warn(s"ALTER TABLE - SUCCESS '$tableName' for alter table statement $alterTableStatement - $url")
+          log.info(s"ALTER TABLE - SUCCESS '$tableName' for alter table statement $alterTableStatement - $url")
         } catch {
           case e: Exception =>
             databaseConnection.rollback()
@@ -214,6 +220,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
             log.warn(s"ALTER TABLE - ROLLBACK '$tableName' for alter table statement $alterTableStatement - $e - $url")
             throw e
         }
+        cdaMergedJDBCMetricsSource.alter_table_counter.inc()
       })
 
       databaseConnection.close()
@@ -324,7 +331,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
    *
    * @param tableDataFrameWrapperForMicroBatch has the data to be written
    */
-  def writeJdbcMerged(tableDataFrameWrapperForMicroBatch: DataFrameWrapperForMicroBatch, connection: Connection): Unit = {
+  def writeJdbcMerged(tableDataFrameWrapperForMicroBatch: DataFrameWrapperForMicroBatch, connection: Connection): MicroBatchUpdateResult = {
 
     log.info(s"+++ Merging '${tableDataFrameWrapperForMicroBatch.tableName}' data for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} as JDBC to ${clientConfig.jdbcConnectionMerged.jdbcUrl}")
 
@@ -337,6 +344,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
 
     // Log total rows to be merged for this fingerprint.
     val totalCount = persistedTableDataframe.count()
+    cdaMergedJDBCMetricsSource.timestamp_record_count_history.update(totalCount)
     log.info(s"Merged - $tableName total count for all ins/upd/del: ${totalCount.toString}")
 
     // Filter for records to insert and drop unwanted columns.
@@ -375,6 +383,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
       val stmt = connection.createStatement
       stmt.execute(createTableDDL)
       stmt.close()
+      cdaMergedJDBCMetricsSource.create_table_counter.inc()
 
       // Create table indexes for the new table.
       createIndexes(connection, url, tableName, JdbcWriteType.Merged)
@@ -388,8 +397,11 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
     log.info(s"Merged - $insertStatement")
 
     // Prepare and execute one insert statement per row in our insert dataframe.
-    updateDataframe(connection, tableName, insertDF, insertSchema, insertStatement, batchSize, dialect, JdbcWriteType.Merged, setUpdateCriteria = false)
-//    insertDF.unpersist()
+    val insertResult = updateDataframe(connection, tableName, insertDF, insertSchema, insertStatement, batchSize, dialect, JdbcWriteType.Merged, setUpdateCriteria = false)
+    cdaMergedJDBCMetricsSource.insert_statement_counter.inc(insertCount)
+    cdaMergedJDBCMetricsSource.rows_inserted_counter.inc(insertResult.updatedRowCount)
+
+    //    insertDF.unpersist()
 
     // Filter for records to update.
     val updateDF = persistedTableDataframe
@@ -402,7 +414,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
     log.info(s"Merged - $tableName update count after filter: ${updateCount.toString}")
 
     // Generate and apply update statements based on the latest transaction for each id.
-    if (updateCount > 0) {
+    val updateResult = if (updateCount > 0) {
       // Get the list of columns
 
       // Build the sql Update statement to be used as a prepared statement for the Updates.
@@ -417,7 +429,12 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
       val updateSchema = updateDF.schema
 
       // Prepare and execute one update statement per row in our update dataframe.
-      updateDataframe(connection, tableName, updateDF, updateSchema, updateStatement, batchSize, dialect, JdbcWriteType.Merged, setUpdateCriteria = true)
+      val result = updateDataframe(connection, tableName, updateDF, updateSchema, updateStatement, batchSize, dialect, JdbcWriteType.Merged, setUpdateCriteria = true)
+      cdaMergedJDBCMetricsSource.update_statement_counter.inc(updateCount)
+      cdaMergedJDBCMetricsSource.rows_updated_counter.inc(result.updatedRowCount)
+      result
+    } else {
+      JdbcUpdateResult(0L, 0L)
     }
 //    updateDF.unpersist()
 
@@ -433,7 +450,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
     log.info(s"Merged - $tableName delete count after filter: ${deleteCount.toString}")
 
     // Generate and apply delete statements.
-    if (deleteCount > 0) {
+    val deleteResult = if (deleteCount > 0) {
       val deleteSchema = deleteDF.schema
       // Build the sql Delete statement to be used as a prepared statement for the Updates.
       val deleteStatement = s"""DELETE FROM $tableName WHERE "id" = ?"""
@@ -441,11 +458,48 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
       log.info(s"Merged - $deleteStatement")
 
       // Prepare and execute one delete statement per row in our delete dataframe.
-      updateDataframe(connection, tableName, deleteDF, deleteSchema, deleteStatement, batchSize, dialect, JdbcWriteType.Merged, setUpdateCriteria = false)
+      val result = updateDataframe(connection, tableName, deleteDF, deleteSchema, deleteStatement, batchSize, dialect, JdbcWriteType.Merged, setUpdateCriteria = false)
+      cdaMergedJDBCMetricsSource.delete_statement_counter.inc(deleteCount)
+      cdaMergedJDBCMetricsSource.rows_deleted_counter.inc(result.updatedRowCount)
 //      deleteDF.unpersist()
+      result
+    } else {
+      JdbcUpdateResult(0L, 0L)
     }
     persistedTableDataframe.unpersist()
     log.info(s"+++ Finished merging '${tableDataFrameWrapperForMicroBatch.tableName}' data for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} as JDBC to ${clientConfig.jdbcConnectionMerged.jdbcUrl}")
+    var batchMetricsMismatch = 0L
+    if (tableDataFrameWrapperForMicroBatch.batchMetricsExpectedUpdates > 0) {
+      val dbUpdatedRowCount = insertResult.updatedRowCount + updateResult.updatedRowCount + deleteResult.updatedRowCount
+      val dbUpdateStatementCount = insertResult.updateStatementCount + updateResult.updateStatementCount + deleteResult.updateStatementCount
+      batchMetricsMismatch = tableDataFrameWrapperForMicroBatch.batchMetricsExpectedUpdates - dbUpdatedRowCount
+      cdaMergedJDBCMetricsSource.batch_metrics_mismatched_rows.update(batchMetricsMismatch)
+      if (clientConfig.metricsSettings.updateMismatchWarningsEnabled && batchMetricsMismatch != 0) {
+        log.warn(s"Expected update count from batch-metrics is ${tableDataFrameWrapperForMicroBatch.batchMetricsExpectedUpdates}, does not match updated database row count ${dbUpdatedRowCount} for table '${tableDataFrameWrapperForMicroBatch.tableName}', timestamp: ${tableDataFrameWrapperForMicroBatch.schemaFingerprintTimestamp}")
+      }
+      if (clientConfig.metricsSettings.updateMismatchWarningsEnabled && tableDataFrameWrapperForMicroBatch.batchMetricsExpectedUpdates != dbUpdateStatementCount) {
+        log.warn(s"Expected update count from batch-metrics is ${tableDataFrameWrapperForMicroBatch.batchMetricsExpectedUpdates}, does not match generated statement count ${dbUpdateStatementCount} for table '${tableDataFrameWrapperForMicroBatch.tableName}', timestamp: ${tableDataFrameWrapperForMicroBatch.schemaFingerprintTimestamp}")
+      }
+    }
+    if (insertResult.updatedRowCount != insertResult.updateStatementCount) {
+      cdaMergedJDBCMetricsSource.insert_affect_row_mismatch_history.update(insertResult.updateStatementCount - insertResult.updatedRowCount)
+      if (clientConfig.metricsSettings.updateMismatchWarningsEnabled) {
+        log.warn(s"Updated row count ${insertResult.updatedRowCount} does not match insert statement count ${insertResult.updateStatementCount} for table '${tableDataFrameWrapperForMicroBatch.tableName}', timestamp: ${tableDataFrameWrapperForMicroBatch.schemaFingerprintTimestamp}")
+      }
+    }
+    if (updateResult.updatedRowCount != updateResult.updateStatementCount) {
+      cdaMergedJDBCMetricsSource.update_affect_row_mismatch_history.update(updateResult.updateStatementCount - updateResult.updatedRowCount)
+      if (clientConfig.metricsSettings.updateMismatchWarningsEnabled) {
+        log.warn(s"Updated row count ${updateResult.updatedRowCount} does not match update statement count ${updateResult.updateStatementCount} for table '${tableDataFrameWrapperForMicroBatch.tableName}', timestamp: ${tableDataFrameWrapperForMicroBatch.schemaFingerprintTimestamp}")
+      }
+    }
+    if (deleteResult.updatedRowCount != deleteResult.updateStatementCount) {
+      cdaMergedJDBCMetricsSource.delete_affect_row_mismatch_history.update(deleteResult.updateStatementCount - deleteResult.updatedRowCount)
+      if (clientConfig.metricsSettings.updateMismatchWarningsEnabled) {
+        log.warn(s"Updated row count ${deleteResult.updatedRowCount} does not match delete statement count ${deleteResult.updateStatementCount} for table '${tableDataFrameWrapperForMicroBatch.tableName}', timestamp: ${tableDataFrameWrapperForMicroBatch.schemaFingerprintTimestamp}")
+      }
+    }
+    MicroBatchUpdateResult(insertResult, updateResult, deleteResult)
   }
 
   protected def validateDBConnection(jdbcUrl: String, jdbcUsername: String, jdbcPassword: String): Unit = {
@@ -624,9 +678,10 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
                               batchSize: Long,
                               dialect: JdbcDialect,
                               jdbcWriteType: JdbcWriteType.Value,
-                              setUpdateCriteria: Boolean): Unit = {
+                              setUpdateCriteria: Boolean): JdbcUpdateResult = {
     var completed = false
     var totalRowCount = 0L
+    var totalRowsUpdatedCount = 0L
     val dbProductName = conn.getMetaData.getDatabaseProductName
     try {
       val stmt = conn.prepareStatement(updateStmt)
@@ -685,14 +740,18 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
           rowCount += 1
           totalRowCount += 1
           if (rowCount % batchSize == 0) {
-            stmt.executeBatch()
+            cdaMergedJDBCMetricsSource.jdbc_batch_size_history.update(rowCount)
+            val resultCounts = stmt.executeBatch()
+            totalRowsUpdatedCount += resultCounts.sum
             log.info(s"$jdbcWriteType - executeBatch - ${rowCount.toString} rows - $updateStmt")
             rowCount = 0
           }
         }
 
         if (rowCount > 0) {
-          stmt.executeBatch()
+          cdaMergedJDBCMetricsSource.jdbc_batch_size_history.update(rowCount)
+          val resultCounts = stmt.executeBatch()
+          totalRowsUpdatedCount += resultCounts.sum
           log.info(s"$jdbcWriteType - executeBatch - ${rowCount.toString} rows - $updateStmt")
         }
       } finally {
@@ -730,6 +789,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
         log.info(s"$jdbcWriteType - Total rows updated for $table: $totalRowCount rows - $updateStmt")
       }
     }
+    return new JdbcUpdateResult(totalRowCount, totalRowsUpdatedCount)
   }
 
   private def getJdbcType(dt: DataType, dialect: JdbcDialect): JdbcType = {

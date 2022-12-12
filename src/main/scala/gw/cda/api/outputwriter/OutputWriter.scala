@@ -3,6 +3,7 @@ package gw.cda.api.outputwriter
 import com.guidewire.cda.DataFrameWrapperForMicroBatch
 import com.guidewire.cda.config.ClientConfig
 import org.apache.logging.log4j.LogManager
+import org.apache.spark.metrics.source.MergedJDBCMetricsSource
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.SparkSession
 
@@ -43,12 +44,12 @@ trait OutputWriter {
 
 object OutputWriter {
   // The apply() is like a builder, caller can create without using the 'new' keyword
-  def apply(outputWriterConfig: OutputWriterConfig): OutputWriter = {
+  def apply(outputWriterConfig: OutputWriterConfig, cdaMergedJDBCMetricsSource: MergedJDBCMetricsSource): OutputWriter = {
     val targetType: String = outputWriterConfig.clientConfig.outputSettings.exportTarget
     targetType match {
       case "file"    => FileBasedOutputWriter(outputWriterConfig)
-      case "jdbc"    => new JdbcOutputWriter(outputWriterConfig.clientConfig)
-      case "jdbc_v2" => new SparkJDBCWriter(outputWriterConfig.clientConfig)
+      case "jdbc"    => new JdbcOutputWriter(outputWriterConfig.clientConfig, cdaMergedJDBCMetricsSource)
+      case "jdbc_v2" => new SparkJDBCWriter(outputWriterConfig.clientConfig, cdaMergedJDBCMetricsSource)
       case _         => throw new UnsupportedOperationException(s"Target type `$targetType` is not supported.")
     }
   }

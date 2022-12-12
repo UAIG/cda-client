@@ -4,7 +4,17 @@ sourceLocation:
 outputLocation:
   path: <folder name>
 savepointsLocation:
-  path: <folder name>
+  uri: file://<folder name>
+metricsSettings:
+  batchMetricsValidationEnabled: true
+  ignoreBatchMetricsErrors: true
+  updateMismatchWarningsEnabled: true
+  sinkSettings:
+    'sink.console.class': 'org.apache.spark.metrics.sink.ConsoleSink'
+sparkSettings:
+  'spark.ui.port': 4040
+
+
 outputSettings:
   # tablesToInclude is a comma delimited list of tables to include. leave blank or omit to include all tables in the output.
   tablesToInclude:

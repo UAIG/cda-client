@@ -31,3 +31,11 @@ jdbcConnectionMerged:
 # performanceTuning:
 #   numberOfJobsInParallelMaxCount: 5
 #   numberOfThreadsPerJob: 10
+metricsSettings:
+  batchMetricsValidationEnabled: true
+  ignoreBatchMetricsErrors: true
+  updateMismatchWarningsEnabled: true
+  sinkSettings:
+    'sink.console.class': 'org.apache.spark.metrics.sink.ConsoleSink'
+sparkSettings:
+  'spark.ui.port': 4040
