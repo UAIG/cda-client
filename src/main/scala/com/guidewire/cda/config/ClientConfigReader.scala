@@ -22,6 +22,7 @@ private[cda] case class SavepointsLocation(uri: String)
 
 private[cda] case class MetricsSettings(batchMetricsValidationEnabled: Boolean = true,
                                         ignoreBatchMetricsErrors: Boolean = true,
+                                        logUnaffectedUpdates: Boolean = true,
                                         updateMismatchWarningsEnabled: Boolean = true,
                                         sinkSettings: mutable.HashMap[String, String] = new mutable.HashMap[String, String]())
 

@@ -18,8 +18,10 @@ import java.sql.Connection
 import java.sql.DriverManager
 import java.sql.PreparedStatement
 import java.sql.SQLException
-import java.util.Locale
+import java.util
+import java.util.{Collections, Locale}
 import scala.collection.JavaConverters.asScalaIteratorConverter
+import scala.collection.mutable
 import scala.util.Failure
 import scala.util.Success
 import scala.util.Try
@@ -321,7 +323,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
     log.info(s"Raw - $insertStatement")
 
     // Prepare and execute one insert statement per row in our insert dataframe.
-    updateDataframe(connection, tableName, insertDF, insertSchema, insertStatement, batchSize, dialect, JdbcWriteType.Raw, setUpdateCriteria = false)
+    updateDataframe(connection, tableName, tableDataFrameWrapperForMicroBatch, insertDF, insertSchema, insertStatement, batchSize, dialect, JdbcWriteType.Raw, setUpdateCriteria = false)
     insertDF.unpersist()
     log.info(s"*** Finished writing '${tableDataFrameWrapperForMicroBatch.tableName}' raw data data for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} as JDBC to ${clientConfig.jdbcConnectionRaw.jdbcUrl}")
   }
@@ -397,7 +399,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
     log.info(s"Merged - $insertStatement")
 
     // Prepare and execute one insert statement per row in our insert dataframe.
-    val insertResult = updateDataframe(connection, tableName, insertDF, insertSchema, insertStatement, batchSize, dialect, JdbcWriteType.Merged, setUpdateCriteria = false)
+    val insertResult = updateDataframe(connection, tableName, tableDataFrameWrapperForMicroBatch, insertDF, insertSchema, insertStatement, batchSize, dialect, JdbcWriteType.Merged, setUpdateCriteria = false)
     cdaMergedJDBCMetricsSource.insert_statement_counter.inc(insertCount)
     cdaMergedJDBCMetricsSource.rows_inserted_counter.inc(insertResult.updatedRowCount)
 
@@ -429,7 +431,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
       val updateSchema = updateDF.schema
 
       // Prepare and execute one update statement per row in our update dataframe.
-      val result = updateDataframe(connection, tableName, updateDF, updateSchema, updateStatement, batchSize, dialect, JdbcWriteType.Merged, setUpdateCriteria = true)
+      val result = updateDataframe(connection, tableName, tableDataFrameWrapperForMicroBatch, updateDF, updateSchema, updateStatement, batchSize, dialect, JdbcWriteType.Merged, setUpdateCriteria = true)
       cdaMergedJDBCMetricsSource.update_statement_counter.inc(updateCount)
       cdaMergedJDBCMetricsSource.rows_updated_counter.inc(result.updatedRowCount)
       result
@@ -458,7 +460,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
       log.info(s"Merged - $deleteStatement")
 
       // Prepare and execute one delete statement per row in our delete dataframe.
-      val result = updateDataframe(connection, tableName, deleteDF, deleteSchema, deleteStatement, batchSize, dialect, JdbcWriteType.Merged, setUpdateCriteria = false)
+      val result = updateDataframe(connection, tableName, tableDataFrameWrapperForMicroBatch, deleteDF, deleteSchema, deleteStatement, batchSize, dialect, JdbcWriteType.Merged, setUpdateCriteria = false)
       cdaMergedJDBCMetricsSource.delete_statement_counter.inc(deleteCount)
       cdaMergedJDBCMetricsSource.rows_deleted_counter.inc(result.updatedRowCount)
 //      deleteDF.unpersist()
@@ -475,28 +477,28 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
       batchMetricsMismatch = tableDataFrameWrapperForMicroBatch.batchMetricsExpectedUpdates - dbUpdatedRowCount
       cdaMergedJDBCMetricsSource.batch_metrics_mismatched_rows.update(batchMetricsMismatch)
       if (clientConfig.metricsSettings.updateMismatchWarningsEnabled && batchMetricsMismatch != 0) {
-        log.warn(s"Expected update count from batch-metrics is ${tableDataFrameWrapperForMicroBatch.batchMetricsExpectedUpdates}, does not match updated database row count ${dbUpdatedRowCount} for table '${tableDataFrameWrapperForMicroBatch.tableName}', timestamp: ${tableDataFrameWrapperForMicroBatch.schemaFingerprintTimestamp}")
+        log.warn(s"Expected update count from batch-metrics is ${tableDataFrameWrapperForMicroBatch.batchMetricsExpectedUpdates}, does not match updated database row count ${dbUpdatedRowCount} for table: ${tableDataFrameWrapperForMicroBatch.tableName}, timestamp: ${tableDataFrameWrapperForMicroBatch.schemaFingerprintTimestamp}")
       }
       if (clientConfig.metricsSettings.updateMismatchWarningsEnabled && tableDataFrameWrapperForMicroBatch.batchMetricsExpectedUpdates != dbUpdateStatementCount) {
-        log.warn(s"Expected update count from batch-metrics is ${tableDataFrameWrapperForMicroBatch.batchMetricsExpectedUpdates}, does not match generated statement count ${dbUpdateStatementCount} for table '${tableDataFrameWrapperForMicroBatch.tableName}', timestamp: ${tableDataFrameWrapperForMicroBatch.schemaFingerprintTimestamp}")
+        log.warn(s"Expected update count from batch-metrics is ${tableDataFrameWrapperForMicroBatch.batchMetricsExpectedUpdates}, does not match generated statement count ${dbUpdateStatementCount} for table: ${tableDataFrameWrapperForMicroBatch.tableName}, timestamp: ${tableDataFrameWrapperForMicroBatch.schemaFingerprintTimestamp}")
       }
     }
     if (insertResult.updatedRowCount != insertResult.updateStatementCount) {
       cdaMergedJDBCMetricsSource.insert_affect_row_mismatch_history.update(insertResult.updateStatementCount - insertResult.updatedRowCount)
       if (clientConfig.metricsSettings.updateMismatchWarningsEnabled) {
-        log.warn(s"Updated row count ${insertResult.updatedRowCount} does not match insert statement count ${insertResult.updateStatementCount} for table '${tableDataFrameWrapperForMicroBatch.tableName}', timestamp: ${tableDataFrameWrapperForMicroBatch.schemaFingerprintTimestamp}")
+        log.warn(s"Updated row count ${insertResult.updatedRowCount} does not match insert statement count ${insertResult.updateStatementCount} for table: ${tableDataFrameWrapperForMicroBatch.tableName}, timestamp: ${tableDataFrameWrapperForMicroBatch.schemaFingerprintTimestamp}")
       }
     }
     if (updateResult.updatedRowCount != updateResult.updateStatementCount) {
       cdaMergedJDBCMetricsSource.update_affect_row_mismatch_history.update(updateResult.updateStatementCount - updateResult.updatedRowCount)
       if (clientConfig.metricsSettings.updateMismatchWarningsEnabled) {
-        log.warn(s"Updated row count ${updateResult.updatedRowCount} does not match update statement count ${updateResult.updateStatementCount} for table '${tableDataFrameWrapperForMicroBatch.tableName}', timestamp: ${tableDataFrameWrapperForMicroBatch.schemaFingerprintTimestamp}")
+        log.warn(s"Updated row count ${updateResult.updatedRowCount} does not match update statement count ${updateResult.updateStatementCount} for table: ${tableDataFrameWrapperForMicroBatch.tableName}, timestamp: ${tableDataFrameWrapperForMicroBatch.schemaFingerprintTimestamp}")
       }
     }
     if (deleteResult.updatedRowCount != deleteResult.updateStatementCount) {
       cdaMergedJDBCMetricsSource.delete_affect_row_mismatch_history.update(deleteResult.updateStatementCount - deleteResult.updatedRowCount)
       if (clientConfig.metricsSettings.updateMismatchWarningsEnabled) {
-        log.warn(s"Updated row count ${deleteResult.updatedRowCount} does not match delete statement count ${deleteResult.updateStatementCount} for table '${tableDataFrameWrapperForMicroBatch.tableName}', timestamp: ${tableDataFrameWrapperForMicroBatch.schemaFingerprintTimestamp}")
+        log.warn(s"Updated row count ${deleteResult.updatedRowCount} does not match delete statement count ${deleteResult.updateStatementCount} for table: ${tableDataFrameWrapperForMicroBatch.tableName}, timestamp: ${tableDataFrameWrapperForMicroBatch.schemaFingerprintTimestamp}")
       }
     }
     MicroBatchUpdateResult(insertResult, updateResult, deleteResult)
@@ -672,6 +674,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
 
   private def updateDataframe(conn: Connection,
                               table: String,
+                              tableDataFrameWrapperForMicroBatch: DataFrameWrapperForMicroBatch,
                               df: DataFrame,
                               rddSchema: StructType,
                               updateStmt: String,
@@ -683,6 +686,17 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
     var totalRowCount = 0L
     var totalRowsUpdatedCount = 0L
     val dbProductName = conn.getMetaData.getDatabaseProductName
+
+    def checkForFailedUpdate(statementHints: util.List[String], rowCount: Int, resultCounts: Array[Int]): Unit = {
+      if (clientConfig.metricsSettings.logUnaffectedUpdates) {
+        for (i <- 0 until rowCount) ({
+          if (resultCounts.length > i && resultCounts(i) == 0 && statementHints.size() > i) {
+            log.warn(s"Statement did not affect any database rows in table: ${tableDataFrameWrapperForMicroBatch.tableName}, fingerprint: ${tableDataFrameWrapperForMicroBatch.schemaFingerprint}, timestamp: ${tableDataFrameWrapperForMicroBatch.schemaFingerprintTimestamp} with ${statementHints.get(i)}: ${updateStmt}")
+          }
+        })
+      }
+    }
+
     try {
       val stmt = conn.prepareStatement(updateStmt)
       val setters = rddSchema.fields.map(f => makeSetter(conn, dialect, f.dataType))
@@ -697,6 +711,11 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
       }
       val numFields = rddSchema.fields.length
 
+      val statementHints:util.List[String] = if (clientConfig.metricsSettings.logUnaffectedUpdates) {
+        new util.ArrayList[String](clientConfig.outputSettings.jdbcBatchSize.toInt)
+      } else {
+        Collections.emptyList()
+      }
       try {
         var rowCount = 0
         df.toLocalIterator().asScala.foreach { row =>
@@ -735,6 +754,11 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
             }
             columnIndex = columnIndex + 1
           }
+          if (clientConfig.metricsSettings.logUnaffectedUpdates) {
+            val id = if (idFieldIndex != -1 && !row.isNullAt(idFieldIndex)) row.get(idFieldIndex).toString else "no-id"
+            val hexVal = if (seqhexFieldIndex != -1  && !row.isNullAt(seqhexFieldIndex)) row.get(seqhexFieldIndex).toString else "no-seqval-hex"
+            statementHints.add(s"id: ${id}, seqval-hex: ${hexVal}")
+          }
 
           stmt.addBatch()
           rowCount += 1
@@ -742,9 +766,13 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
           if (rowCount % batchSize == 0) {
             cdaMergedJDBCMetricsSource.jdbc_batch_size_history.update(rowCount)
             val resultCounts = stmt.executeBatch()
+            checkForFailedUpdate(statementHints, rowCount, resultCounts)
             totalRowsUpdatedCount += resultCounts.sum
             log.info(s"$jdbcWriteType - executeBatch - ${rowCount.toString} rows - $updateStmt")
             rowCount = 0
+            if (clientConfig.metricsSettings.logUnaffectedUpdates) {
+              statementHints.clear()
+            }
           }
         }
 
@@ -752,6 +780,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
           cdaMergedJDBCMetricsSource.jdbc_batch_size_history.update(rowCount)
           val resultCounts = stmt.executeBatch()
           totalRowsUpdatedCount += resultCounts.sum
+          checkForFailedUpdate(statementHints, rowCount, resultCounts)
           log.info(s"$jdbcWriteType - executeBatch - ${rowCount.toString} rows - $updateStmt")
         }
       } finally {

@@ -71,9 +71,9 @@ class SavepointsProcessor(directoryUri: URI) {
    * @param tableName String name of table
    * @return Option[String] of last read timestamp of table
    */
-  private[cda] def getSavepoint(tableName: String): Option[String] = {
+  private[cda] def getSavepoint(tableName: String): Option[String] = synchronized({
     this.savepointsDataMap.get(tableName)
-  }
+  })
 
   /** Write the timestamp for the table into the savepoints file.
    * Example entry in savepoints json:

@@ -256,10 +256,13 @@ metricsSettings:
   batchMetricsValidationEnabled: ...
   ignoreBatchMetricsErrors: ...
   updateMismatchWarningsEnabled: ...
+  logUnaffectedUpdates: ...
   sinkSettings:
     ...
 sparkSettings:
    ...        
+connectionPoolSettings:
+  maximumPoolSize: ...
 ~~~~
 
 </p>
@@ -294,7 +297,9 @@ sparkSettings:
 <dl><dt><tt>ignoreBatchMetricsErrors</tt></dt>
 <dd>Ignore errors while fetching or processing batch-metrics.json based metrics. Processing continues in case an error occurs while processing the batch-metrics; errors are logged only if enabled. Default: true</dd></dl>
 <dl><dt><tt>updateMismatchWarningsEnabled</tt></dt>
-<dd>Controls if warnings about mismatches between statement count vs affected row count are shown. Default: true</dd></dl>
+<dd>If enabled, warnings about mismatches between statement count vs affected row count are shown. Default: true</dd></dl>
+<dl><dt><tt>logUnaffectedUpdates</tt></dt>
+<dd>If enabled, a warning message is logged for every statement that does not affect/update a row in the database. Default: true</dd></dl>
 </dd>
 
 <dt><tt>sparkSettings</tt></dt>
@@ -318,7 +323,7 @@ sparkSettings:
 <dl><dt><tt>minimumIdle</tt></dt>
 <dd>This property controls the minimum number of idle connections that HikariCP tries to maintain in the pool. If the idle connections dip below this value and total connections in the pool are less than maximumPoolSize, HikariCP will make a best effort to add additional connections quickly and efficiently. However, for maximum performance and responsiveness to spike demands, we recommend not setting this value and instead allowing HikariCP to act as a fixed size connection pool. Default: same as maximumPoolSize</dd></dl>
 <dl><dt><tt>maximumPoolSize</tt></dt>
-<dd>This property controls the maximum size that the pool is allowed to reach, including both idle and in-use connections. Basically this value will determine the maximum number of actual connections to the database backend. A reasonable value for this is best determined by your execution environment. When the pool reaches this size, and no idle connections are available, calls to getConnection() will block for up to connectionTimeout milliseconds before timing out. Please read about pool sizing. Default: 10</dd></dl>
+<dd>This property controls the maximum size that the pool is allowed to reach, including both idle and in-use connections. Basically this value will determine the maximum number of actual connections to the database backend. A reasonable value for this is best determined by your execution environment. When the pool reaches this size, and no idle connections are available, calls to getConnection() will block for up to connectionTimeout milliseconds before timing out. Please read about pool sizing. The pool needs to large enough to supply connections to all parallel jobs. Default: 10</dd></dl>
 <dl><dt><tt>connectionInitSql</tt></dt>
 <dd>This property sets a SQL statement that will be executed after every new connection creation before adding it to the pool. If this SQL is not valid or throws an exception, it will be treated as a connection failure and the standard retry logic will be followed. Default: none</dd></dl>
 <dl><dt><tt>transactionIsolation</tt></dt>

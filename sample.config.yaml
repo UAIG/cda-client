@@ -9,10 +9,13 @@ metricsSettings:
   batchMetricsValidationEnabled: true
   ignoreBatchMetricsErrors: true
   updateMismatchWarningsEnabled: true
+  logUnaffectedUpdates: true
   sinkSettings:
-    'sink.console.class': 'org.apache.spark.metrics.sink.ConsoleSink'
+    '*.sink.console.class': 'org.apache.spark.metrics.sink.ConsoleSink'
 sparkSettings:
   'spark.ui.port': 4040
+connectionPoolSettings:
+  maximumPoolSize: 100
 
 
 outputSettings:

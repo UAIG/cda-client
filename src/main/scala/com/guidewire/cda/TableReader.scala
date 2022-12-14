@@ -80,7 +80,7 @@ class TableReader(clientConfig: ClientConfig) {
     })
 
   if (clientConfig.metricsSettings.sinkSettings != null) {
-    clientConfig.metricsSettings.sinkSettings.foreach((kv) => if (kv._1.nonEmpty) conf.set(s"spark.metrics.conf.*.${kv._1}", kv._2))
+    clientConfig.metricsSettings.sinkSettings.foreach((kv) => if (kv._1.nonEmpty) conf.set(s"spark.metrics.conf.${kv._1}", kv._2))
   }
 
   if (clientConfig.sparkSettings != null) {
@@ -240,7 +240,7 @@ class TableReader(clientConfig: ClientConfig) {
             completed = true
           } catch {
             case e: Throwable =>
-              log.warn(s"Copy Job FAILED for '$tableName' for fingerprint '$schemaFingerprint': $e")
+              log.error(s"Copy Job FAILED for '$tableName' for fingerprint '$schemaFingerprint': $e")
           } finally {
             if (completed) {
               log.info(s"Copy Job is complete for '$tableName' for fingerprint '$schemaFingerprint'; completed: ${completedNumberOfTableFingerprintPairs.incrementAndGet()} of $totalNumberOfTableFingerprintPairs tables")
@@ -320,19 +320,19 @@ class TableReader(clientConfig: ClientConfig) {
 
     // Get the last timestamp in the fingerprint.  We will need this when we update savepoints later on.
     val maxTimestamp = timestampSubfolderLocations.map(_.maxBy(_.subfolderTimestamp).subfolderTimestamp).getOrElse(0)
-    log.info(s"maxTimestamp for fingerprint '$schemaFingerprint' = $maxTimestamp")
+    log.info(s"maxTimestamp for table: $tableName, fingerprint: $schemaFingerprint = $maxTimestamp")
 
     // Read all timestamp subfolder urls, for this table, into DataFrames using Spark
     timestampSubfolderLocations
       .map(timestampSubfolderLocationsForTable => {
         // Start the StopWatch for this table
-        log.info(s"New data found for '$tableName' with fingerprint '$schemaFingerprint'")
         val tableStopwatch = new StopWatch()
         tableStopwatch.start()
 
         var schemaCheckDone: Boolean = false
 
         val allDataFrameWrappersForTable = timestampSubfolderLocationsForTable.toSeq.sortBy(_.subfolderTimestamp)
+        log.info(s"New data found for '$tableName' with fingerprint '$schemaFingerprint', timestamps: [${allDataFrameWrappersForTable.map(d => d.subfolderTimestamp).mkString(", ")}]")
         for (tableLocation <- allDataFrameWrappersForTable) {
 
           val fetchStartTime = tableStopwatch.getTime
@@ -383,7 +383,7 @@ class TableReader(clientConfig: ClientConfig) {
               cdaReaderMetricsSource.batch_metrics_written_counter.inc(bm.numRecordsWritten)
               cdaReaderMetricsSource.batch_metrics_read_counter.inc(bm.numRecordsRead)
             })
-            log.info(s"Wrote data file ${allDataFrameWrappersForTable.size} for table '${tableName}' for fingerprint '${schemaFingerprint}', took ${(fullWriteTime / 1000.0).toString} seconds")
+            log.info(s"Wrote ${allDataFrameWrappersForTable.size} timestamps for table '${tableName}' for fingerprint '${schemaFingerprint}', last-timestamp: ${maxTimestamp}, took ${(fullWriteTime / 1000.0).toString} seconds")
 
             // Get a list of all fingerprints that follow the one we are processing.
             val manifestEntry = manifestMap(tableName)
@@ -397,7 +397,7 @@ class TableReader(clientConfig: ClientConfig) {
             // that are not being processed.
             if (clientConfig.outputSettings.exportTarget == "jdbc" && fingerprintsAfterCurrent.nonEmpty) {
               val bypassedFingerprintsList = fingerprintsAfterCurrent.map({ case (schemaFingerprint, _) => schemaFingerprint })
-              log.warn(
+              log.info(
                 s"""
                    | $tableName fingerprint(s) were not processed in this load: ${bypassedFingerprintsList.toString.stripPrefix("List(").stripSuffix(")")}
                    |   Only one fingerprint per table can be processed at a time.""")
