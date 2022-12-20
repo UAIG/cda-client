@@ -293,7 +293,7 @@ connectionPoolSettings:
 <dl><dt><tt>sinkSettings</tt></dt>
 <dd>Configuration properties for the Spark metrics system. Settings are being passed though to Spark config with the metrics prefix. More information about available settings can be found under https://spark.apache.org/docs/3.3.1/monitoring.html.</dd></dl>
 <dl><dt><tt>batchMetricsValidationEnabled</tt></dt>
-<dd>Enable fetching batch-metrics.json based metrics and compare batch-metrics with update results.</dd></dl>
+<dd>Enables fetching batch-metrics.json based metrics and compare batch-metrics with update results. Default: true</dd></dl>
 <dl><dt><tt>ignoreBatchMetricsErrors</tt></dt>
 <dd>Ignore errors while fetching or processing batch-metrics.json based metrics. Processing continues in case an error occurs while processing the batch-metrics; errors are logged only if enabled. Default: true</dd></dl>
 <dl><dt><tt>updateMismatchWarningsEnabled</tt></dt>
@@ -304,7 +304,7 @@ connectionPoolSettings:
 
 <dt><tt>sparkSettings</tt></dt>
 <dd>
-<dl><dd>Configuration properties for the Spark. Properties are passed through to Spark and override any existing configuration with the same key.</dd></dl>
+<dl><dd>Configuration properties for Spark. The properties are passed through to the Spark configuration and override any existing configuration with the same key.</dd></dl>
 </dd>
 
 <dt><tt>connectionPoolSettings</tt></dt>
@@ -341,7 +341,7 @@ connectionPoolSettings:
 <dl><dt><tt>tablesToInclude</tt></dt>
 <dd>(Should be blank by default)</dd><dd> A comma delimited list of tables to include. Leave blank or omit to include all tables in the output.  This is for testing or troubleshooting purposes only. In a Production environment there should be no values here. It is for loading one or more tables to test connectivity, reviewing individual tables in a testing scenario.</dd></dl>
 <dl><dt><tt>tablesToExclude</tt></dt>
-<dd>(Should be blank by default)</dd><dd> A comma delimited list of tables to exclude. Leave blank or omit to include all tables in the output.  This is for testing or troubleshooting purposes only. In a Production environment there should be no values here. It is for loading one or more tables to test connectivity, reviewing individual tables in a testing scenario.</dd></dl>
+<dd>(Should be blank by default)</dd><dd> A comma delimited list of tables to exclude. Leave blank or omit to include all tables in the output.</dd></dl>
 <dt><tt>saveIntoJdbcRaw</tt></dt>
 <dd>Boolean (defaults to false)</dd><dd>Should be "true" to write data to a database in Raw format (all activities and operations included in the output). </dd>
 <dt><tt>saveIntoJdbcMerged</tt></dt>
@@ -596,7 +596,7 @@ When rerunning the utility, the client will resume from the savepoints written i
 <details>
 <summary>Click to expand</summary>
 
-###Connection pool metrics
+### Connection pool metrics
 The merged connection pool also exports metrics, more details can be found [here](https://github.com/brettwooldridge/HikariCP/wiki/Dropwizard-Metrics).
 
 | Metric | Description |
@@ -608,9 +608,9 @@ The merged connection pool also exports metrics, more details can be found [here
 | merged_connection.pool.ActiveConnections | A CachedGauge, refreshed on demand at 1 second resolution, indicating the number of active (in-use) connections in the pool. |
 | merged_connection.pool.PendingConnections | A CachedGauge, refreshed on demand at 1 second resolution, indicating the number of threads awaiting connections from the pool. |
 
-###CDA load process metrics
+### CDA load process metrics
 
-The CDA client produces a number of metrics that are specific for the CDA "merged" data load process. For more information on the metrics types, see the [Dropwizard Metrics](https://metrics.dropwizard.io) documentation.
+The CDA client collects metrics for the TableReader and additional metrics that are specific for the CDA "merged" data load process. For more information on the metrics types, see the [Dropwizard Metrics](https://metrics.dropwizard.io) documentation.
 
 | Metric | Type | Description |
 |--------|------|-------------|
