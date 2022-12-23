@@ -3,6 +3,7 @@ package gw.cda.api.outputwriter
 import com.guidewire.cda.DataFrameWrapperForMicroBatch
 import com.guidewire.cda.config.ClientConfig
 import com.guidewire.cda.config.InvalidConfigParameterException
+import gw.cda.api.outputwriter.StatementType.{StatementType, UPDATE}
 import org.apache.spark.metrics.source.MergedJDBCMetricsSource
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.jdbc.JdbcDialect
@@ -31,6 +32,11 @@ object JdbcWriteType extends Enumeration {
 
   val Raw = Value("Raw")
   val Merged = Value("Merged")
+}
+
+object StatementType extends Enumeration {
+  type StatementType = Value
+  val INSERT, UPDATE, DELETE, RAW = Value
 }
 
 case class JdbcUpdateResult(updateStatementCount: Long, updatedRowCount: Long) {}
@@ -323,7 +329,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
     log.info(s"Raw - $insertStatement")
 
     // Prepare and execute one insert statement per row in our insert dataframe.
-    updateDataframe(connection, tableName, tableDataFrameWrapperForMicroBatch, insertDF, insertSchema, insertStatement, batchSize, dialect, JdbcWriteType.Raw, setUpdateCriteria = false)
+    updateDataframe(connection, tableName, tableDataFrameWrapperForMicroBatch, insertDF, insertSchema, insertStatement, batchSize, dialect, JdbcWriteType.Raw, StatementType.RAW)
     insertDF.unpersist()
     log.info(s"*** Finished writing '${tableDataFrameWrapperForMicroBatch.tableName}' raw data data for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} as JDBC to ${clientConfig.jdbcConnectionRaw.jdbcUrl}")
   }
@@ -395,11 +401,15 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
     // Build the insert statement.
     val columns = insertSchema.fields.map(x => dialect.quoteIdentifier(x.name)).mkString(",")
     val placeholders = insertSchema.fields.map(_ => "?").mkString(",")
-    val insertStatement = s"INSERT INTO $tableName ($columns) VALUES ($placeholders)"
+    val insertStatement = if (clientConfig.jdbcConnectionMerged.upsertInserts) {
+      s"MERGE INTO $tableName AS TARGET USING (SELECT * FROM $tableName WHERE id = ?) AS SOURCE on(Source.id = Target.id) WHEN NOT MATCHED BY TARGET THEN INSERT ($columns) VALUES ($placeholders)"
+    } else {
+      s"INSERT INTO $tableName ($columns) VALUES ($placeholders)"
+    }
     log.info(s"Merged - $insertStatement")
 
     // Prepare and execute one insert statement per row in our insert dataframe.
-    val insertResult = updateDataframe(connection, tableName, tableDataFrameWrapperForMicroBatch, insertDF, insertSchema, insertStatement, batchSize, dialect, JdbcWriteType.Merged, setUpdateCriteria = false)
+    val insertResult = updateDataframe(connection, tableName, tableDataFrameWrapperForMicroBatch, insertDF, insertSchema, insertStatement, batchSize, dialect, JdbcWriteType.Merged, StatementType.INSERT)
     cdaMergedJDBCMetricsSource.insert_statement_counter.inc(insertCount)
     cdaMergedJDBCMetricsSource.rows_inserted_counter.inc(insertResult.updatedRowCount)
 
@@ -431,7 +441,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
       val updateSchema = updateDF.schema
 
       // Prepare and execute one update statement per row in our update dataframe.
-      val result = updateDataframe(connection, tableName, tableDataFrameWrapperForMicroBatch, updateDF, updateSchema, updateStatement, batchSize, dialect, JdbcWriteType.Merged, setUpdateCriteria = true)
+      val result = updateDataframe(connection, tableName, tableDataFrameWrapperForMicroBatch, updateDF, updateSchema, updateStatement, batchSize, dialect, JdbcWriteType.Merged, StatementType.UPDATE)
       cdaMergedJDBCMetricsSource.update_statement_counter.inc(updateCount)
       cdaMergedJDBCMetricsSource.rows_updated_counter.inc(result.updatedRowCount)
       result
@@ -460,7 +470,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
       log.info(s"Merged - $deleteStatement")
 
       // Prepare and execute one delete statement per row in our delete dataframe.
-      val result = updateDataframe(connection, tableName, tableDataFrameWrapperForMicroBatch, deleteDF, deleteSchema, deleteStatement, batchSize, dialect, JdbcWriteType.Merged, setUpdateCriteria = false)
+      val result = updateDataframe(connection, tableName, tableDataFrameWrapperForMicroBatch, deleteDF, deleteSchema, deleteStatement, batchSize, dialect, JdbcWriteType.Merged, StatementType.DELETE)
       cdaMergedJDBCMetricsSource.delete_statement_counter.inc(deleteCount)
       cdaMergedJDBCMetricsSource.rows_deleted_counter.inc(result.updatedRowCount)
 //      deleteDF.unpersist()
@@ -681,7 +691,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
                               batchSize: Long,
                               dialect: JdbcDialect,
                               jdbcWriteType: JdbcWriteType.Value,
-                              setUpdateCriteria: Boolean): JdbcUpdateResult = {
+                              statementType: StatementType): JdbcUpdateResult = {
     var completed = false
     var totalRowCount = 0L
     var totalRowsUpdatedCount = 0L
@@ -718,15 +728,17 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
       }
       try {
         var rowCount = 0
+        val idFieldIndex = rddSchema.fields.zipWithIndex.filter(_._1.name.equalsIgnoreCase("id")).map(_._2)
+        var seqhexFieldIndex = -1
         df.toLocalIterator().asScala.foreach { row =>
           var i = 0
           var columnIndex = 1
-          var idFieldIndex = -1
-          var seqhexFieldIndex = -1
+          if (clientConfig.jdbcConnectionMerged.upsertInserts && statementType == StatementType.INSERT) {
+            idFieldIndex.foreach(idIndex => makeSetter(conn, dialect, rddSchema.fields(idIndex).dataType).apply(stmt, row, idIndex, 1))
+            columnIndex = 2
+          }
           while (i < numFields) {
-            if (setUpdateCriteria && "id".equalsIgnoreCase(rddSchema.fields(i).name)) {
-              idFieldIndex = i;
-            } else {
+            if (statementType != StatementType.UPDATE || !"id".equalsIgnoreCase(rddSchema.fields(i).name)) {
               if ("gwcbi___seqval_hex".equalsIgnoreCase(rddSchema.fields{i}.name)) {
                 seqhexFieldIndex = i;
               }
@@ -742,11 +754,11 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
           }
 
           // set criteria columns for the update statement
-          if (setUpdateCriteria) {
-            if (idFieldIndex != -1) {
-              makeSetter(conn, dialect, rddSchema.fields(idFieldIndex).dataType).apply(stmt, row, idFieldIndex, columnIndex)
+          if (statementType == StatementType.UPDATE) {
+            idFieldIndex.foreach(idIndex =>  {
+              makeSetter(conn, dialect, rddSchema.fields(idIndex).dataType).apply(stmt, row, idIndex, columnIndex)
               columnIndex = columnIndex + 1
-            }
+            })
             if (seqhexFieldIndex != -1) {
               makeSetter(conn, dialect, rddSchema.fields(seqhexFieldIndex).dataType).apply(stmt, row, seqhexFieldIndex, columnIndex)
             } else {
@@ -755,8 +767,8 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
             columnIndex = columnIndex + 1
           }
           if (clientConfig.metricsSettings.logUnaffectedUpdates) {
-            val id = if (idFieldIndex != -1 && !row.isNullAt(idFieldIndex)) row.get(idFieldIndex).toString else "no-id"
-            val hexVal = if (seqhexFieldIndex != -1  && !row.isNullAt(seqhexFieldIndex)) row.get(seqhexFieldIndex).toString else "no-seqval-hex"
+            val id = idFieldIndex.map(index => { if (row.isNullAt(index)) "null" else row.get(index).toString }).orElse("no-id")
+            val hexVal = if (seqhexFieldIndex == -1) "no-seqval-hex" else { if (row.isNullAt(seqhexFieldIndex)) "null" else row.get(seqhexFieldIndex).toString }
             statementHints.add(s"id: ${id}, seqval-hex: ${hexVal}")
           }
 

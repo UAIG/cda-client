@@ -78,7 +78,6 @@ jdbcConnectionMerged:
   jdbcUrl: 'jdbc:sqlserver://<host>\<instance>;databaseName=<database name>;integratedSecurity=true'
   jdbcSchema: dbo
 
-  jdbcApplyLatestUpdatesOnly: true
 #performanceTuning:
 #  numberOfJobsInParallelMaxCount: 32
 #  numberOfThreadsPerJob: 15

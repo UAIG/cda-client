@@ -26,7 +26,6 @@ jdbcConnectionMerged:
   jdbcPassword: Gw_123!
   jdbcUrl: 'jdbc:postgresql://localhost/CDA'
   jdbcSchema: public
-  jdbcApplyLatestUpdatesOnly: true
 # This section is optional
 # performanceTuning:
 #   numberOfJobsInParallelMaxCount: 5

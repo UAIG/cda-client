@@ -418,8 +418,8 @@ ALTER COLUMN [column] VARCHAR2(32767) // requires MAX_STRING_SIZE Oracle paramet
 <dd>Connection string for database connectivity. </dd>
 <dt><tt>jdbcSchema</tt></dt>
 <dd>Database schema owner designation for tables written to the database. i.e. - 'dbo' is the default for SQL Server, 'public' is the default for PostgreSQL.</dd>
-<dt><tt>jdbcApplyLatestUpdatesOnly</tt></dt>
-<dd>Boolean (defaults to false)</dd><dd>Should be "true" for applying the latest version of a record for a given table. "false" will process all the activities for a record in the order they occurred. for CDC processing, the most recent entry for a given record is the current state of that record. this option allows the application of only that most recent activity and version of the record.</dd>
+<dt><tt>upsertInserts</tt></dt>
+<dd>Boolean (defaults to false)</dd><dd>If set true, inserts are not executed if a row with the same id already exists.</dd>
 </dl></dd>
 
 <dt><tt>performanceTuning</tt></dt>
