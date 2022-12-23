@@ -70,7 +70,7 @@ trait FileBasedOutputWriter extends OutputWriter {
    */
   def getPathToFileWithSchema(tableDataFrameWrapperForMicroBatch: DataFrameWrapperForMicroBatch): URI
 
-  /** Build the path to a common folder structure: PREFIX/table/timestamp
+  /** Build the path to a common folder structure: PREFIX/table/fingerprint/timestamp
    *
    * @param pathPrefix                         A DataFrame corresponding to a table
    * @param tableDataFrameWrapperForMicroBatch has the data to be written

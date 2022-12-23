@@ -10,13 +10,14 @@ import gw.cda.api.utils.S3ClientSupplier
 import org.apache.commons.lang.time.StopWatch
 import org.apache.logging.log4j.LogManager
 import org.apache.spark.{SparkConf, SparkContext, SparkEnv}
-import org.apache.spark.metrics.source.{MergedJDBCMetricsSource, ReaderMetricsSource, HikariMetricsSource}
+import org.apache.spark.metrics.source.{HikariMetricsSource, MergedJDBCMetricsSource, ReaderMetricsSource}
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.functions.{lit, to_timestamp, when}
 
 import java.net.URI
 import java.nio.file.Paths
+import java.time.Duration
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicInteger
 import scala.collection.JavaConversions._
@@ -39,7 +40,7 @@ private[cda] case class DataFrameWrapper(tableName: String,
 
 case class DataFrameWrapperForMicroBatch(tableName: String,
                                          schemaFingerprint: String,
-                                         schemaFingerprintTimestamp: String,
+                                         folderTimestamp: String,
                                          manifestTimestamp: String,
                                          dataFrame: DataFrame,
                                          batchMetricsExpectedUpdates: Long)
@@ -306,7 +307,7 @@ class TableReader(clientConfig: ClientConfig) {
    *
    * @param tableName                   Name of the table.
    * @param schemaFingerprint           Schema fingerprint for the pair.
-   * @param timestampSubfolderLocations Locations of the timestamp subfolders to read from.
+   * @param timestampSubfolderLocations Locations of the timestamp subfolders to read from, just for one fingerprint.
    * @param manifestMap                 Manifest entries.
    * @param savepointsProcessor         Savepoints processor.
    * @param outputWriter                Writer that controls where table is written.
@@ -330,10 +331,11 @@ class TableReader(clientConfig: ClientConfig) {
         tableStopwatch.start()
 
         var schemaCheckDone: Boolean = false
+        var schemasAreConsistent: Boolean = false
 
         val allDataFrameWrappersForTable = timestampSubfolderLocationsForTable.toSeq.sortBy(_.subfolderTimestamp)
         log.info(s"New data found for '$tableName' with fingerprint '$schemaFingerprint', timestamps: [${allDataFrameWrappersForTable.map(d => d.subfolderTimestamp).mkString(", ")}]")
-        for (tableLocation <- allDataFrameWrappersForTable) {
+        allDataFrameWrappersForTable.foreach(tableLocation => {
 
           val fetchStartTime = tableStopwatch.getTime
           val dataFrameForTable = try {
@@ -360,9 +362,8 @@ class TableReader(clientConfig: ClientConfig) {
           } else {
             Option.empty
           }
-          cdaReaderMetricsSource.timestamp_fetch_time_history.update(tableStopwatch.getTime - fetchStartTime)
+          cdaReaderMetricsSource.timestamp_fetch_time.update(Duration.ofMillis(tableStopwatch.getTime - fetchStartTime))
 
-          var schemasAreConsistent = false
           if (!schemaCheckDone) {
             schemasAreConsistent = outputWriter.schemasAreConsistent(dataFrameForTable.dataFrame, tableName, schemaFingerprint, spark)
             schemaCheckDone = true
@@ -372,54 +373,50 @@ class TableReader(clientConfig: ClientConfig) {
             // Write each table and its schema to the configured output type(s) (CSV, Parquet, JDBC) to the configured location
             val startWriteTime = tableStopwatch.getTime
             val manifestTimestampForTable = manifestMap(tableName).lastSuccessfulWriteTimestamp
-            val schemaFingerprintTimestamp = manifestMap(tableName).schemaHistory.getOrElse(schemaFingerprint, "unknown")
-            val tableDataFrameWrapperForMicroBatch = DataFrameWrapperForMicroBatch(tableName, schemaFingerprint, schemaFingerprintTimestamp, manifestTimestampForTable, dataFrameForTable.dataFrame, batchMetrics.map(_.numRecordsWritten).getOrElse({ -1L}))
+            val tableDataFrameWrapperForMicroBatch = DataFrameWrapperForMicroBatch(tableName, schemaFingerprint, tableLocation.subfolderTimestamp.toString, manifestTimestampForTable, dataFrameForTable.dataFrame, batchMetrics.map(_.numRecordsWritten).getOrElse({ -1L}))
             outputWriter.write(tableDataFrameWrapperForMicroBatch)
             val fullWriteTime = tableStopwatch.getTime - startWriteTime
-            cdaReaderMetricsSource.timestamp_write_time_history.update(fullWriteTime)
+            cdaReaderMetricsSource.timestamp_write_timer.update(Duration.ofMillis(fullWriteTime))
             // only count batch metrics for records that were written
             batchMetrics.foreach(bm => {
               cdaReaderMetricsSource.batch_metrics_dropped_counter.inc(bm.numRecordsDropped)
               cdaReaderMetricsSource.batch_metrics_written_counter.inc(bm.numRecordsWritten)
               cdaReaderMetricsSource.batch_metrics_read_counter.inc(bm.numRecordsRead)
             })
-            log.info(s"Wrote ${allDataFrameWrappersForTable.size} timestamps for table '${tableName}' for fingerprint '${schemaFingerprint}', last-timestamp: ${maxTimestamp}, took ${(fullWriteTime / 1000.0).toString} seconds")
-
-            // Get a list of all fingerprints that follow the one we are processing.
-            val manifestEntry = manifestMap(tableName)
-            val fingerprintsAfterCurrent = manifestEntry.schemaHistory
-              .map({ case (schemaFingerprint, timestamp) => (schemaFingerprint, timestamp.toLong) })
-              .filter({ case (_, timestamp) => timestamp > schemaFingerprintTimestamp.toLong })
-              .toList
-              .sortBy({ case (_, timestamp) => timestamp })
-
-            // Log a warning message listing any additional fingerprints for this table
-            // that are not being processed.
-            if (clientConfig.outputSettings.exportTarget == "jdbc" && fingerprintsAfterCurrent.nonEmpty) {
-              val bypassedFingerprintsList = fingerprintsAfterCurrent.map({ case (schemaFingerprint, _) => schemaFingerprint })
-              log.info(
-                s"""
-                   | $tableName fingerprint(s) were not processed in this load: ${bypassedFingerprintsList.toString.stripPrefix("List(").stripSuffix(")")}
-                   |   Only one fingerprint per table can be processed at a time.""")
-            }
+            log.info(s"Wrote timestamp ${tableLocation.subfolderTimestamp} for table '${tableName}', fingerprint '${schemaFingerprint}', took ${(fullWriteTime / 1000.0).toString} seconds")
 
             // If loading to jdbc target, only one Fingerprint will be processed at a time.
             // If loading files (CSV, Parquet), all Fingerprints are loaded.
             // Savepoints logic will be different for those scenarios.
             //    * If loading jdbc, use the last timestamp folder actually written.
             //    * If loading files, use the lastSuccessfulWriteTimestamp for that table from manifest.json.
-            if(clientConfig.outputSettings.exportTarget=="jdbc") {
-              savepointsProcessor.writeSavepoints(tableName, maxTimestamp.toString)
-            } else {
-              savepointsProcessor.writeSavepoints(tableName, manifestTimestampForTable)
-            }
+            savepointsProcessor.writeSavepoints(tableName, tableLocation.subfolderTimestamp.toString)
           }
+        })
+
+        // Get a list of all fingerprints that follow the one we are processing.
+        val manifestEntry = manifestMap(tableName)
+        val schemaFingerprintTimestamp = manifestEntry.schemaHistory.getOrElse(schemaFingerprint, "unknown")
+        val fingerprintsAfterCurrent = manifestEntry.schemaHistory
+          .map({ case (schemaFingerprint, timestamp) => (schemaFingerprint, timestamp.toLong) })
+          .filter({ case (_, timestamp) => timestamp > schemaFingerprintTimestamp.toLong })
+          .toList
+          .sortBy({ case (_, timestamp) => timestamp })
+
+        // Log a warning message listing any additional fingerprints for this table
+        // that are not being processed.
+        if (clientConfig.outputSettings.exportTarget == "jdbc" && fingerprintsAfterCurrent.nonEmpty) {
+          val bypassedFingerprintsList = fingerprintsAfterCurrent.map({ case (schemaFingerprint, _) => schemaFingerprint })
+          log.info(
+            s"""
+               | $tableName fingerprint(s) were not processed in this load: ${bypassedFingerprintsList.toString.stripPrefix("List(").stripSuffix(")")}
+               |   Only one fingerprint per table can be processed at a time.""")
         }
 
 
         //Stop the StopWatch, and print out the results
         tableStopwatch.stop()
-        cdaReaderMetricsSource.table_process_time_history.update(tableStopwatch.getTime)
+        cdaReaderMetricsSource.table_process_time_history.update(Duration.ofMillis(tableStopwatch.getTime))
         log.info(s"Processed '$tableName' for fingerprint '$schemaFingerprint', took ${(tableStopwatch.getTime / 1000.0).toString} seconds")
       })
       .getOrElse(log.info(s"Skipping '$tableName' for fingerprint '$schemaFingerprint', no new data found"))

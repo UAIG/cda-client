@@ -620,9 +620,9 @@ The CDA client collects metrics for the TableReader and additional metrics that 
 | ReaderMetrics.batch_metrics.written_count | Counter | Counter for all "written" record counts from any batch-metrics.json that is being processed. |
 | ReaderMetrics.data.read_error_count | Counter | Counts the number of errors while fetching data from S3. |
 | ReaderMetrics.manifest.table_count | Histogram  | Histogram of number of tables found in the manifest. |
-| ReaderMetrics.table.processing_time_ms | Histogram | Histogram of processing time for entire tables in ms. |
-| ReaderMetrics.timestamp_folder.fetch_time_ms | Histogram | Time it takes to construct a dataframe for all Parquet files within a timestamp folder. |
-| ReaderMetrics.timestamp_folder.write_time_ms | Histogram | Time it takes to write records for a single timestamp folder. |
+| ReaderMetrics.table.processing_time_ms | Timer | Timer of processing time for entire tables in ms. |
+| ReaderMetrics.timestamp_folder.fetch_time_ms | Timer | Time it takes to construct a dataframe for all Parquet files within a timestamp folder. |
+| ReaderMetrics.timestamp_folder.write_time_ms | Timer | Time it takes to write records for a single timestamp folder. |
 | MergedJDBCMetrics.affected_rows.delete_mismatches | Histogram | Histogram of mismatches between executed update statements and affected rows in the database. A positive value indicates that more statements were executed than rows updated, a negative value indicates that more rows were updated than statements executed. |
 | MergedJDBCMetrics.affected_rows.insert_mismatches | Histogram | Histogram of mismatches between executed insert statements and affected rows in the database. A positive value indicates that more statements were executed than rows updated, a negative value indicates that more rows were updated than statements executed. |
 | MergedJDBCMetrics.affected_rows.update_mismatches | Histogram | Histogram of mismatches between executed update statements and affected rows in the database. A positive value indicates that more statements were executed than rows updated, a negative value indicates that more rows were updated than statements executed. |

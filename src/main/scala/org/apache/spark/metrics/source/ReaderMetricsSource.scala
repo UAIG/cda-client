@@ -1,6 +1,6 @@
 package org.apache.spark.metrics.source
 
-import com.codahale.metrics.{Counter, Histogram, MetricRegistry}
+import com.codahale.metrics.{Counter, Histogram, MetricRegistry, Timer}
 import org.apache.spark.SparkContext
 
 /**
@@ -13,12 +13,12 @@ class ReaderMetricsSource(c: SparkContext) extends Source {
   /**
    * Time it takes to write records for a single timestamp folder.
    */
-  val timestamp_write_time_history: Histogram = metricRegistry.histogram(MetricRegistry.name("timestamp_folder.write_time_ms"))
+  val timestamp_write_timer: Timer = metricRegistry.timer(MetricRegistry.name("timestamp_folder.write_time_ms"))
 
   /**
    * Time it takes to construct a dataframe for all Parquet files within a timestamp folder.
    */
-  val timestamp_fetch_time_history: Histogram = metricRegistry.histogram(MetricRegistry.name("timestamp_folder.fetch_time_ms"))
+  val timestamp_fetch_time: Timer = metricRegistry.timer(MetricRegistry.name("timestamp_folder.fetch_time_ms"))
 
   /**
    * Counter for all "written" record counts from any batch-metrics.json that is being processed.
@@ -46,9 +46,9 @@ class ReaderMetricsSource(c: SparkContext) extends Source {
   val batch_metrics_read_error_counter: Counter = metricRegistry.counter(MetricRegistry.name("batch_metrics.read_error_count"))
 
   /**
-   * Histogram of processing time for entire tables in ms. 
+   * Timer of processing time for entire tables in ms.
    */
-  val table_process_time_history: Histogram = metricRegistry.histogram(MetricRegistry.name("table.processing_time_ms"))
+  val table_process_time_history: Timer = metricRegistry.timer(MetricRegistry.name("table.processing_time_ms"))
 
   /**
    * Histogram of number of tables found in the manifest.

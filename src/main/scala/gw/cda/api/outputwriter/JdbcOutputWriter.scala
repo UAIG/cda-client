@@ -477,28 +477,28 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
       batchMetricsMismatch = tableDataFrameWrapperForMicroBatch.batchMetricsExpectedUpdates - dbUpdatedRowCount
       cdaMergedJDBCMetricsSource.batch_metrics_mismatched_rows.update(batchMetricsMismatch)
       if (clientConfig.metricsSettings.updateMismatchWarningsEnabled && batchMetricsMismatch != 0) {
-        log.warn(s"Expected update count from batch-metrics is ${tableDataFrameWrapperForMicroBatch.batchMetricsExpectedUpdates}, does not match updated database row count ${dbUpdatedRowCount} for table: ${tableDataFrameWrapperForMicroBatch.tableName}, timestamp: ${tableDataFrameWrapperForMicroBatch.schemaFingerprintTimestamp}")
+        log.warn(s"Expected update count from batch-metrics is ${tableDataFrameWrapperForMicroBatch.batchMetricsExpectedUpdates}, does not match updated database row count ${dbUpdatedRowCount} for table: ${tableDataFrameWrapperForMicroBatch.tableName}, timestamp: ${tableDataFrameWrapperForMicroBatch.folderTimestamp}")
       }
       if (clientConfig.metricsSettings.updateMismatchWarningsEnabled && tableDataFrameWrapperForMicroBatch.batchMetricsExpectedUpdates != dbUpdateStatementCount) {
-        log.warn(s"Expected update count from batch-metrics is ${tableDataFrameWrapperForMicroBatch.batchMetricsExpectedUpdates}, does not match generated statement count ${dbUpdateStatementCount} for table: ${tableDataFrameWrapperForMicroBatch.tableName}, timestamp: ${tableDataFrameWrapperForMicroBatch.schemaFingerprintTimestamp}")
+        log.warn(s"Expected update count from batch-metrics is ${tableDataFrameWrapperForMicroBatch.batchMetricsExpectedUpdates}, does not match generated statement count ${dbUpdateStatementCount} for table: ${tableDataFrameWrapperForMicroBatch.tableName}, timestamp: ${tableDataFrameWrapperForMicroBatch.folderTimestamp}")
       }
     }
     if (insertResult.updatedRowCount != insertResult.updateStatementCount) {
       cdaMergedJDBCMetricsSource.insert_affect_row_mismatch_history.update(insertResult.updateStatementCount - insertResult.updatedRowCount)
       if (clientConfig.metricsSettings.updateMismatchWarningsEnabled) {
-        log.warn(s"Updated row count ${insertResult.updatedRowCount} does not match insert statement count ${insertResult.updateStatementCount} for table: ${tableDataFrameWrapperForMicroBatch.tableName}, timestamp: ${tableDataFrameWrapperForMicroBatch.schemaFingerprintTimestamp}")
+        log.warn(s"Updated row count ${insertResult.updatedRowCount} does not match insert statement count ${insertResult.updateStatementCount} for table: ${tableDataFrameWrapperForMicroBatch.tableName}, timestamp: ${tableDataFrameWrapperForMicroBatch.folderTimestamp}")
       }
     }
     if (updateResult.updatedRowCount != updateResult.updateStatementCount) {
       cdaMergedJDBCMetricsSource.update_affect_row_mismatch_history.update(updateResult.updateStatementCount - updateResult.updatedRowCount)
       if (clientConfig.metricsSettings.updateMismatchWarningsEnabled) {
-        log.warn(s"Updated row count ${updateResult.updatedRowCount} does not match update statement count ${updateResult.updateStatementCount} for table: ${tableDataFrameWrapperForMicroBatch.tableName}, timestamp: ${tableDataFrameWrapperForMicroBatch.schemaFingerprintTimestamp}")
+        log.warn(s"Updated row count ${updateResult.updatedRowCount} does not match update statement count ${updateResult.updateStatementCount} for table: ${tableDataFrameWrapperForMicroBatch.tableName}, timestamp: ${tableDataFrameWrapperForMicroBatch.folderTimestamp}")
       }
     }
     if (deleteResult.updatedRowCount != deleteResult.updateStatementCount) {
       cdaMergedJDBCMetricsSource.delete_affect_row_mismatch_history.update(deleteResult.updateStatementCount - deleteResult.updatedRowCount)
       if (clientConfig.metricsSettings.updateMismatchWarningsEnabled) {
-        log.warn(s"Updated row count ${deleteResult.updatedRowCount} does not match delete statement count ${deleteResult.updateStatementCount} for table: ${tableDataFrameWrapperForMicroBatch.tableName}, timestamp: ${tableDataFrameWrapperForMicroBatch.schemaFingerprintTimestamp}")
+        log.warn(s"Updated row count ${deleteResult.updatedRowCount} does not match delete statement count ${deleteResult.updateStatementCount} for table: ${tableDataFrameWrapperForMicroBatch.tableName}, timestamp: ${tableDataFrameWrapperForMicroBatch.folderTimestamp}")
       }
     }
     MicroBatchUpdateResult(insertResult, updateResult, deleteResult)
@@ -691,7 +691,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
       if (clientConfig.metricsSettings.logUnaffectedUpdates) {
         for (i <- 0 until rowCount) ({
           if (resultCounts.length > i && resultCounts(i) == 0 && statementHints.size() > i) {
-            log.warn(s"Statement did not affect any database rows in table: ${tableDataFrameWrapperForMicroBatch.tableName}, fingerprint: ${tableDataFrameWrapperForMicroBatch.schemaFingerprint}, timestamp: ${tableDataFrameWrapperForMicroBatch.schemaFingerprintTimestamp} with ${statementHints.get(i)}: ${updateStmt}")
+            log.warn(s"Statement did not affect any database rows in table: ${tableDataFrameWrapperForMicroBatch.tableName}, fingerprint: ${tableDataFrameWrapperForMicroBatch.schemaFingerprint}, timestamp: ${tableDataFrameWrapperForMicroBatch.folderTimestamp} with ${statementHints.get(i)}: ${updateStmt}")
           }
         })
       }
