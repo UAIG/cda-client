@@ -194,11 +194,11 @@ class TableReader(clientConfig: ClientConfig) {
         tablesToInclude = tablesToInclude.replaceAll(" ", "").toLowerCase(Locale.US)
         val tablesList = tablesToInclude.split(",")
         logMsg = logMsg + (s"""Including ONLY ${tablesList.size} table(s): $tablesToInclude""".stripMargin)
-        useManifestMap = manifestMap.filterKeys(tablesList.contains)
+        useManifestMap = useManifestMap.filterKeys(tablesList.contains)
       }
 
       if (tablesToExclude.nonEmpty) {
-        useManifestMap = manifestMap.filterKeys( k => !tablesToExclude.contains(k))
+        useManifestMap = useManifestMap.filterKeys( k => !tablesToExclude.contains(k))
       }
 
       // Log user configs info we prepared above
