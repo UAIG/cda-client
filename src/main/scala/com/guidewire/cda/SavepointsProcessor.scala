@@ -100,6 +100,6 @@ class SavepointsProcessor(directoryUri: URI) {
         val newSavepointsFile = new File(savepointsFileURI)
         FileUtils.writeStringToFile(newSavepointsFile, newSavepointsJson, null: String)
     }
-    log.info(s"Updated savepoints file")
+    log.debug(s"Updated savepoints file")
   }
 }

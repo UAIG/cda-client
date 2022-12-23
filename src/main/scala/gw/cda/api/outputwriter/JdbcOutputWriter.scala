@@ -127,7 +127,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
             case e: Exception =>
               cdaMergedJDBCMetricsSource.data_write_error_counter.inc()
               mergedConn.rollback()
-              log.info(s"Merged - ROLLBACK '$tableName' for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} - $e - ${clientConfig.jdbcConnectionMerged.jdbcUrl}")
+              log.warn(s"Merged - ROLLBACK '$tableName' for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint}, timestamp ${tableDataFrameWrapperForMicroBatch.folderTimestamp} - $e - ${clientConfig.jdbcConnectionMerged.jdbcUrl}")
               throw e
           } finally {
             mergedConn.close()
@@ -341,7 +341,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
    */
   def writeJdbcMerged(tableDataFrameWrapperForMicroBatch: DataFrameWrapperForMicroBatch, connection: Connection): MicroBatchUpdateResult = {
 
-    log.info(s"+++ Merging '${tableDataFrameWrapperForMicroBatch.tableName}' data for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} as JDBC to ${clientConfig.jdbcConnectionMerged.jdbcUrl}")
+    log.debug(s"+++ Merging '${tableDataFrameWrapperForMicroBatch.tableName}' data for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} as JDBC to ${clientConfig.jdbcConnectionMerged.jdbcUrl}")
 
     val tableName = clientConfig.jdbcConnectionMerged.jdbcSchema + "." + tableDataFrameWrapperForMicroBatch.tableName
     val tableNameNoSchema = tableDataFrameWrapperForMicroBatch.tableName
@@ -353,7 +353,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
     // Log total rows to be merged for this fingerprint.
     val totalCount = persistedTableDataframe.count()
     cdaMergedJDBCMetricsSource.timestamp_record_count_history.update(totalCount)
-    log.info(s"Merged - $tableName total count for all ins/upd/del: ${totalCount.toString}")
+    log.debug(s"Merged - $tableName total count for all ins/upd/del: ${totalCount.toString}")
 
     // Filter for records to insert and drop unwanted columns.
     val insertDF = persistedTableDataframe
@@ -363,7 +363,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
 
     // Log total rows to be inserted for this fingerprint.
     val insertCount = insertDF.count()
-    log.info(s"Merged - $tableName insert count after filter: ${insertCount.toString}")
+    log.debug(s"Merged - $tableName insert count after filter: ${insertCount.toString}")
 
     // Determine if we need to create the table by checking if the table already exists.
     val url = clientConfig.jdbcConnectionMerged.jdbcUrl
@@ -406,7 +406,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
     } else {
       s"INSERT INTO $tableName ($columns) VALUES ($placeholders)"
     }
-    log.info(s"Merged - $insertStatement")
+    log.debug(s"Merged - $insertStatement")
 
     // Prepare and execute one insert statement per row in our insert dataframe.
     val insertResult = updateDataframe(connection, tableName, tableDataFrameWrapperForMicroBatch, insertDF, insertSchema, insertStatement, batchSize, dialect, JdbcWriteType.Merged, StatementType.INSERT)
@@ -423,7 +423,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
 
     // Log total rows marked as updates.
     val updateCount = updateDF.count()
-    log.info(s"Merged - $tableName update count after filter: ${updateCount.toString}")
+    log.debug(s"Merged - $tableName update count after filter: ${updateCount.toString}")
 
     // Generate and apply update statements based on the latest transaction for each id.
     val updateResult = if (updateCount > 0) {
@@ -435,7 +435,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
 
       val colNamesForSetClause = colListForSetClause.map("\"" + _ + "\" = ?").mkString(", ")
       val updateStatement = s"""UPDATE $tableName SET $colNamesForSetClause WHERE "id" = ? AND "gwcbi___seqval_hex" < ? """
-      log.info(s"Merged - $updateStatement")
+      log.debug(s"Merged - $updateStatement")
 
       // Get schema info required for updatePartition call.
       val updateSchema = updateDF.schema
@@ -459,7 +459,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
 
     // Log number of records to be deleted.
     val deleteCount = deleteDF.count()
-    log.info(s"Merged - $tableName delete count after filter: ${deleteCount.toString}")
+    log.debug(s"Merged - $tableName delete count after filter: ${deleteCount.toString}")
 
     // Generate and apply delete statements.
     val deleteResult = if (deleteCount > 0) {
@@ -467,7 +467,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
       // Build the sql Delete statement to be used as a prepared statement for the Updates.
       val deleteStatement = s"""DELETE FROM $tableName WHERE "id" = ?"""
       //      val deleteStatement = "DELETE FROM " + tableName + " WHERE \"id\" = ?"
-      log.info(s"Merged - $deleteStatement")
+      log.debug(s"Merged - $deleteStatement")
 
       // Prepare and execute one delete statement per row in our delete dataframe.
       val result = updateDataframe(connection, tableName, tableDataFrameWrapperForMicroBatch, deleteDF, deleteSchema, deleteStatement, batchSize, dialect, JdbcWriteType.Merged, StatementType.DELETE)
@@ -479,7 +479,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
       JdbcUpdateResult(0L, 0L)
     }
     persistedTableDataframe.unpersist()
-    log.info(s"+++ Finished merging '${tableDataFrameWrapperForMicroBatch.tableName}' data for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} as JDBC to ${clientConfig.jdbcConnectionMerged.jdbcUrl}")
+    log.info(s"+++ Finished writing '${tableDataFrameWrapperForMicroBatch.tableName}' data for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} as merged JDBC with ${insertCount.toString} inserts, ${updateCount.toString} updates, ${deleteCount.toString} deletes, total count for all ins/upd/del: ${totalCount.toString}")
     var batchMetricsMismatch = 0L
     if (tableDataFrameWrapperForMicroBatch.batchMetricsExpectedUpdates > 0) {
       val dbUpdatedRowCount = insertResult.updatedRowCount + updateResult.updatedRowCount + deleteResult.updatedRowCount
