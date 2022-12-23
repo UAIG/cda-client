@@ -402,7 +402,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
     val columns = insertSchema.fields.map(x => dialect.quoteIdentifier(x.name)).mkString(",")
     val placeholders = insertSchema.fields.map(_ => "?").mkString(",")
     val insertStatement = if (clientConfig.jdbcConnectionMerged.upsertInserts) {
-      s"MERGE INTO $tableName AS TARGET USING (SELECT * FROM $tableName WHERE id = ?) AS SOURCE on(Source.id = Target.id) WHEN NOT MATCHED BY TARGET THEN INSERT ($columns) VALUES ($placeholders)"
+      s"MERGE INTO $tableName AS TARGET USING (SELECT * FROM $tableName WHERE id = ?) AS SOURCE on(Source.id = Target.id) WHEN NOT MATCHED BY TARGET THEN INSERT ($columns) VALUES ($placeholders);"
     } else {
       s"INSERT INTO $tableName ($columns) VALUES ($placeholders)"
     }
