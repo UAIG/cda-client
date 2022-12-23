@@ -365,7 +365,7 @@ class TableReader(clientConfig: ClientConfig) {
           cdaReaderMetricsSource.timestamp_fetch_time.update(Duration.ofMillis(tableStopwatch.getTime - fetchStartTime))
 
           if (!schemaCheckDone) {
-            schemasAreConsistent = outputWriter.schemasAreConsistent(dataFrameForTable.dataFrame, tableName, schemaFingerprint, spark)
+            schemasAreConsistent = outputWriter.schemasAreConsistent(dataFrameForTable.dataFrame, tableName, schemaFingerprint, spark) || clientConfig.outputSettings.ignoreSchemaChanges
             schemaCheckDone = true
           }
 

@@ -342,6 +342,8 @@ connectionPoolSettings:
 <dd>(Should be blank by default)</dd><dd> A comma delimited list of tables to include. Leave blank or omit to include all tables in the output.  This is for testing or troubleshooting purposes only. In a Production environment there should be no values here. It is for loading one or more tables to test connectivity, reviewing individual tables in a testing scenario.</dd></dl>
 <dl><dt><tt>tablesToExclude</tt></dt>
 <dd>(Should be blank by default)</dd><dd> A comma delimited list of tables to exclude. Leave blank or omit to include all tables in the output.</dd></dl>
+<dl><dt><tt>ignoreSchemaChanges</tt></dt>
+<dd>(Should be blank by default)</dd><dd> Controls if schema incompatibilities are ignored and data is written to tables that schema does not match. Even after setting this to true, only one fingerprint will be processed per job run.</dd></dl>
 <dt><tt>saveIntoJdbcRaw</tt></dt>
 <dd>Boolean (defaults to false)</dd><dd>Should be "true" to write data to a database in Raw format (all activities and operations included in the output). </dd>
 <dt><tt>saveIntoJdbcMerged</tt></dt>
@@ -418,7 +420,7 @@ ALTER COLUMN [column] VARCHAR2(32767) // requires MAX_STRING_SIZE Oracle paramet
 <dd>Connection string for database connectivity. </dd>
 <dt><tt>jdbcSchema</tt></dt>
 <dd>Database schema owner designation for tables written to the database. i.e. - 'dbo' is the default for SQL Server, 'public' is the default for PostgreSQL.</dd>
-<dt><tt>upsertInserts</tt></dt>
+<dt><tt>ignoreInsertIfAlreadyExists</tt></dt>
 <dd>Boolean (defaults to false)</dd><dd>If set true, inserts are not executed if a row with the same id already exists.</dd>
 </dl></dd>
 

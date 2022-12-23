@@ -48,7 +48,8 @@ private[cda] case class OutputSettings(tablesToInclude: String,
                                        saveAsSingleFile: Boolean,
                                        saveIntoTimestampDirectory: Boolean,
                                        largeTextFields: String,
-                                       jdbcBatchSize: Long)
+                                       jdbcBatchSize: Long,
+                                       ignoreSchemaChanges: Boolean)
 
 private[cda] case class PerformanceTuning(var numberOfJobsInParallelMaxCount: Int,
                                           var numberOfThreadsPerJob: Int,
@@ -74,7 +75,7 @@ private[cda] case class JdbcConnectionMerged(jdbcUsername: String,
                                              jdbcPassword: String,
                                              jdbcUrl: String,
                                              jdbcSchema: String,
-                                             upsertInserts: Boolean )
+                                             ignoreInsertIfAlreadyExists: Boolean)
 
 case class ClientConfig(sourceLocation: SourceLocation,
                         outputLocation: OutputLocation,

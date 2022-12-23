@@ -401,7 +401,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
     // Build the insert statement.
     val columns = insertSchema.fields.map(x => dialect.quoteIdentifier(x.name)).mkString(",")
     val placeholders = insertSchema.fields.map(_ => "?").mkString(",")
-    val insertStatement = if (clientConfig.jdbcConnectionMerged.upsertInserts) {
+    val insertStatement = if (clientConfig.jdbcConnectionMerged.ignoreInsertIfAlreadyExists) {
       s"MERGE INTO $tableName AS TARGET USING (SELECT * FROM $tableName WHERE id = ?) AS SOURCE on(Source.id = Target.id) WHEN NOT MATCHED BY TARGET THEN INSERT ($columns) VALUES ($placeholders);"
     } else {
       s"INSERT INTO $tableName ($columns) VALUES ($placeholders)"
@@ -733,7 +733,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
         df.toLocalIterator().asScala.foreach { row =>
           var i = 0
           var columnIndex = 1
-          if (clientConfig.jdbcConnectionMerged.upsertInserts && statementType == StatementType.INSERT) {
+          if (clientConfig.jdbcConnectionMerged.ignoreInsertIfAlreadyExists && statementType == StatementType.INSERT) {
             idFieldIndex.foreach(idIndex => makeSetter(conn, dialect, rddSchema.fields(idIndex).dataType).apply(stmt, row, idIndex, 1))
             columnIndex = 2
           }
