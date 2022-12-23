@@ -479,7 +479,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
       JdbcUpdateResult(0L, 0L)
     }
     persistedTableDataframe.unpersist()
-    log.info(s"+++ Finished writing '${tableDataFrameWrapperForMicroBatch.tableName}' data for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} as merged JDBC with ${insertCount.toString} inserts, ${updateCount.toString} updates, ${deleteCount.toString} deletes, total count for all ins/upd/del: ${totalCount.toString}")
+    log.info(s"+++ Finished writing '${tableDataFrameWrapperForMicroBatch.tableName}' data for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint}, timestamp ${tableDataFrameWrapperForMicroBatch.folderTimestamp} as merged JDBC with ${insertCount.toString} inserts, ${updateCount.toString} updates, ${deleteCount.toString} deletes, total count for all ins/upd/del: ${totalCount.toString}")
     var batchMetricsMismatch = 0L
     if (tableDataFrameWrapperForMicroBatch.batchMetricsExpectedUpdates > 0) {
       val dbUpdatedRowCount = insertResult.updatedRowCount + updateResult.updatedRowCount + deleteResult.updatedRowCount
