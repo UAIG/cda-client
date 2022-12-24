@@ -49,7 +49,7 @@ private[cda] case class OutputSettings(tablesToInclude: String,
                                        saveIntoTimestampDirectory: Boolean,
                                        largeTextFields: String,
                                        jdbcBatchSize: Long,
-                                       ignoreSchemaChanges: Boolean)
+                                       ignoreSchemaMismatches: Boolean)
 
 private[cda] case class PerformanceTuning(var numberOfJobsInParallelMaxCount: Int,
                                           var numberOfThreadsPerJob: Int,

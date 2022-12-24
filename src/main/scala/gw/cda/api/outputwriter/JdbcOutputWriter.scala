@@ -400,10 +400,12 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
 
     // Build the insert statement.
     val columns = insertSchema.fields.map(x => dialect.quoteIdentifier(x.name)).mkString(",")
-    val placeholders = insertSchema.fields.map(_ => "?").mkString(",")
     val insertStatement = if (clientConfig.jdbcConnectionMerged.ignoreInsertIfAlreadyExists) {
-      s"MERGE INTO $tableName AS TARGET USING (SELECT * FROM $tableName WHERE id = ?) AS SOURCE on(Source.id = Target.id) WHEN NOT MATCHED BY TARGET THEN INSERT ($columns) VALUES ($placeholders);"
+      val sourceColumns = insertSchema.fields.map(x => s"? AS ${dialect.quoteIdentifier(x.name)}").mkString(",")
+      val valueColumns = insertSchema.fields.map(x => s"SOURCE.${dialect.quoteIdentifier(x.name)}").mkString(",")
+      s"MERGE INTO $tableName AS TARGET USING (SELECT $sourceColumns) AS SOURCE on(TARGET.id = SOURCE.id) WHEN NOT MATCHED BY TARGET THEN INSERT ($columns) VALUES ($valueColumns);"
     } else {
+      val placeholders = insertSchema.fields.map(_ => "?").mkString(",")
       s"INSERT INTO $tableName ($columns) VALUES ($placeholders)"
     }
     log.debug(s"Merged - $insertStatement")
@@ -728,19 +730,22 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
       }
       try {
         var rowCount = 0
-        val idFieldIndex = rddSchema.fields.zipWithIndex.filter(_._1.name.equalsIgnoreCase("id")).map(_._2)
-        var seqhexFieldIndex = -1
+        var idFieldIndex: Option[Int] = Option.empty
+        var seqhexFieldIndex: Option[Int] = Option.empty
         df.toLocalIterator().asScala.foreach { row =>
           var i = 0
           var columnIndex = 1
-          if (clientConfig.jdbcConnectionMerged.ignoreInsertIfAlreadyExists && statementType == StatementType.INSERT) {
-            idFieldIndex.foreach(idIndex => makeSetter(conn, dialect, rddSchema.fields(idIndex).dataType).apply(stmt, row, idIndex, 1))
-            columnIndex = 2
-          }
           while (i < numFields) {
-            if (statementType != StatementType.UPDATE || !"id".equalsIgnoreCase(rddSchema.fields(i).name)) {
+
+            val isIdField = "id".equalsIgnoreCase(rddSchema.fields(i).name)
+
+            if (isIdField) {
+              idFieldIndex = Option(i)
+            }
+
+            if (statementType != StatementType.UPDATE || !isIdField) {
               if ("gwcbi___seqval_hex".equalsIgnoreCase(rddSchema.fields{i}.name)) {
-                seqhexFieldIndex = i;
+                seqhexFieldIndex = Option(i)
               }
 
               if (row.isNullAt(i)) {
@@ -759,16 +764,18 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
               makeSetter(conn, dialect, rddSchema.fields(idIndex).dataType).apply(stmt, row, idIndex, columnIndex)
               columnIndex = columnIndex + 1
             })
-            if (seqhexFieldIndex != -1) {
-              makeSetter(conn, dialect, rddSchema.fields(seqhexFieldIndex).dataType).apply(stmt, row, seqhexFieldIndex, columnIndex)
-            } else {
+            if (seqhexFieldIndex.isEmpty) {
               stmt.setLong(columnIndex, Long.MaxValue)
+            } else {
+              seqhexFieldIndex.foreach(index => {
+                makeSetter(conn, dialect, rddSchema.fields(index).dataType).apply(stmt, row, index, columnIndex)
+              })
             }
             columnIndex = columnIndex + 1
           }
           if (clientConfig.metricsSettings.logUnaffectedUpdates) {
-            val id = idFieldIndex.map(index => { if (row.isNullAt(index)) "null" else row.get(index).toString }).orElse("no-id")
-            val hexVal = if (seqhexFieldIndex == -1) "no-seqval-hex" else { if (row.isNullAt(seqhexFieldIndex)) "null" else row.get(seqhexFieldIndex).toString }
+            val id = idFieldIndex.map(index => { if (row.isNullAt(index)) "null" else row.get(index).toString }).getOrElse("no-id")
+            val hexVal = seqhexFieldIndex.map(index => { if (row.isNullAt(index)) "null" else row.get(index).toString }).getOrElse("no-seqval-hex")
             statementHints.add(s"id: ${id}, seqval-hex: ${hexVal}")
           }
 
