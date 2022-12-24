@@ -787,7 +787,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
             val resultCounts = stmt.executeBatch()
             checkForFailedUpdate(statementHints, rowCount, resultCounts)
             totalRowsUpdatedCount += resultCounts.sum
-            log.info(s"$jdbcWriteType - executeBatch - ${rowCount.toString} rows - $updateStmt")
+            log.info(s"$jdbcWriteType - executeBatch - ${rowCount.toString} rows${if (clientConfig.jdbcConnectionMerged.logStatement) s" - $updateStmt" else ""}")
             rowCount = 0
             if (clientConfig.metricsSettings.logUnaffectedUpdates) {
               statementHints.clear()
@@ -800,7 +800,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
           val resultCounts = stmt.executeBatch()
           totalRowsUpdatedCount += resultCounts.sum
           checkForFailedUpdate(statementHints, rowCount, resultCounts)
-          log.info(s"$jdbcWriteType - executeBatch - ${rowCount.toString} rows - $updateStmt")
+          log.info(s"$jdbcWriteType - executeBatch - ${rowCount.toString} rows${if (clientConfig.jdbcConnectionMerged.logStatement) s" - $updateStmt" else ""}")
         }
       } finally {
         stmt.close()

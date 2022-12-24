@@ -75,7 +75,8 @@ private[cda] case class JdbcConnectionMerged(jdbcUsername: String,
                                              jdbcPassword: String,
                                              jdbcUrl: String,
                                              jdbcSchema: String,
-                                             ignoreInsertIfAlreadyExists: Boolean)
+                                             ignoreInsertIfAlreadyExists: Boolean,
+                                             logStatement: Boolean)
 
 case class ClientConfig(sourceLocation: SourceLocation,
                         outputLocation: OutputLocation,

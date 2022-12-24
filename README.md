@@ -422,6 +422,8 @@ ALTER COLUMN [column] VARCHAR2(32767) // requires MAX_STRING_SIZE Oracle paramet
 <dd>Database schema owner designation for tables written to the database. i.e. - 'dbo' is the default for SQL Server, 'public' is the default for PostgreSQL.</dd>
 <dt><tt>ignoreInsertIfAlreadyExists</tt></dt>
 <dd>Boolean (defaults to false)</dd><dd>If set true, inserts are not executed if a row with the same id already exists (by using SQL merge statements). </dd>
+<dt><tt>logStatement</tt></dt>
+<dd>Boolean (defaults to false)</dd><dd>If set true, the SQL statement for every executed batch is included in an info level log message.</dd>
 </dl></dd>
 
 <dt><tt>performanceTuning</tt></dt>
