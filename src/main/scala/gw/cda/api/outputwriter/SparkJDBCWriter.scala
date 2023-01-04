@@ -17,7 +17,7 @@ import java.sql.SQLException
  * This is going to use connection details from `jdbcV2Connection`
  * and write records to DB in raw format.
  */
-private[outputwriter] class SparkJDBCWriter(override val clientConfig: ClientConfig, cdaMergedJDBCMetricsSource: MergedJDBCMetricsSource) extends JdbcOutputWriter(clientConfig, cdaMergedJDBCMetricsSource) {
+private[outputwriter] class SparkJDBCWriter(override val clientConfig: ClientConfig, cdaMergedJDBCMetricsSource: MergedJDBCMetricsSource, outputWriterConfig: OutputWriterConfig) extends JdbcOutputWriter(clientConfig, cdaMergedJDBCMetricsSource, outputWriterConfig) {
 
   private val connectionConfig = clientConfig.jdbcV2Connection
   private val saveMode: SaveMode = connectionConfig.jdbcSaveMode match {

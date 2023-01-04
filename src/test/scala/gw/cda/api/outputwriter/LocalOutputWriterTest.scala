@@ -15,7 +15,7 @@ import org.apache.spark.sql.types.StructType
 
 import java.io.IOException
 import java.nio.file.Paths
-import java.util.Date
+import java.util.{Date, TimeZone}
 import scala.io.Source
 
 class LocalOutputWriterTest extends CDAClientTestSpec {
@@ -73,9 +73,9 @@ class LocalOutputWriterTest extends CDAClientTestSpec {
 
   describe("Testing OutputWriter functionality") {
 
-    val testWriter = FileBasedOutputWriter(OutputWriterConfig(testWriterPath.toUri, includeColumnNames = false, saveAsSingleFile = false, saveIntoTimestampDirectory = false, clientConfig = clientConfig))
-    val testWriterWithHeader = FileBasedOutputWriter(OutputWriterConfig(testWriterPath.toUri, includeColumnNames = true, saveAsSingleFile = false, saveIntoTimestampDirectory = false, clientConfig = clientConfig))
-    val testWriterWithTimestamp = FileBasedOutputWriter(OutputWriterConfig(testWriterPath.toUri, includeColumnNames = true, saveAsSingleFile = true, saveIntoTimestampDirectory = true, clientConfig = clientConfig))
+    val testWriter = FileBasedOutputWriter(OutputWriterConfig(testWriterPath.toUri, includeColumnNames = false, saveAsSingleFile = false, saveIntoTimestampDirectory = false, clientConfig = clientConfig, TimeZone.getDefault))
+    val testWriterWithHeader = FileBasedOutputWriter(OutputWriterConfig(testWriterPath.toUri, includeColumnNames = true, saveAsSingleFile = false, saveIntoTimestampDirectory = false, clientConfig = clientConfig, TimeZone.getDefault))
+    val testWriterWithTimestamp = FileBasedOutputWriter(OutputWriterConfig(testWriterPath.toUri, includeColumnNames = true, saveAsSingleFile = true, saveIntoTimestampDirectory = true, clientConfig = clientConfig, TimeZone.getDefault))
 
     val letters = "ABCDEFGHI"
     val numbers = 1 to 10
@@ -89,11 +89,11 @@ class LocalOutputWriterTest extends CDAClientTestSpec {
         testWriter.validate()
 
         val writer2path = Paths.get("src/test/resources/nonexisting").toUri
-        val writer2 = FileBasedOutputWriter(OutputWriterConfig(writer2path, includeColumnNames = false, saveAsSingleFile = false, saveIntoTimestampDirectory = false, clientConfig = clientConfig))
+        val writer2 = FileBasedOutputWriter(OutputWriterConfig(writer2path, includeColumnNames = false, saveAsSingleFile = false, saveIntoTimestampDirectory = false, clientConfig = clientConfig, TimeZone.getDefault))
         a[IOException] should be thrownBy writer2.validate()
 
         val writer3path = Paths.get(testManifestPath).toUri
-        val writer3 = FileBasedOutputWriter(OutputWriterConfig(writer3path, includeColumnNames = false, saveAsSingleFile = false, saveIntoTimestampDirectory = false, clientConfig = clientConfig))
+        val writer3 = FileBasedOutputWriter(OutputWriterConfig(writer3path, includeColumnNames = false, saveAsSingleFile = false, saveIntoTimestampDirectory = false, clientConfig = clientConfig, TimeZone.getDefault))
         a[IOException] should be thrownBy writer3.validate()
       }
     }

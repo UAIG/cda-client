@@ -5,6 +5,8 @@ import gw.cda.api.utils.AWSUtils
 import gw.cda.api.utils.ObjectMapperSupplier
 
 import java.net.URI
+import java.time.ZoneId
+import java.util.TimeZone
 import scala.collection.mutable
 import scala.io.Source
 
@@ -76,7 +78,8 @@ private[cda] case class JdbcConnectionMerged(jdbcUsername: String,
                                              jdbcUrl: String,
                                              jdbcSchema: String,
                                              ignoreInsertIfAlreadyExists: Boolean,
-                                             logStatement: Boolean)
+                                             logStatement: Boolean,
+                                             dataTimeZone: String = "UTC")
 
 case class ClientConfig(sourceLocation: SourceLocation,
                         outputLocation: OutputLocation,

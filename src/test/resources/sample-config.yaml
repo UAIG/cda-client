@@ -26,6 +26,7 @@ jdbcConnectionMerged:
   jdbcPassword: Gw_123!
   jdbcUrl: 'jdbc:postgresql://localhost/CDA'
   jdbcSchema: public
+  dataTimeZone: UTC
 # This section is optional
 # performanceTuning:
 #   numberOfJobsInParallelMaxCount: 5

@@ -8,8 +8,9 @@ import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.SparkSession
 
 import java.net.URI
+import java.util.TimeZone
 
-case class OutputWriterConfig(outputUri: URI, includeColumnNames: Boolean, saveAsSingleFile: Boolean, saveIntoTimestampDirectory: Boolean, clientConfig: ClientConfig)
+case class OutputWriterConfig(outputUri: URI, includeColumnNames: Boolean, saveAsSingleFile: Boolean, saveIntoTimestampDirectory: Boolean, clientConfig: ClientConfig, dataTimeZone: TimeZone)
 
 trait OutputWriter {
 
@@ -48,8 +49,8 @@ object OutputWriter {
     val targetType: String = outputWriterConfig.clientConfig.outputSettings.exportTarget
     targetType match {
       case "file"    => FileBasedOutputWriter(outputWriterConfig)
-      case "jdbc"    => new JdbcOutputWriter(outputWriterConfig.clientConfig, cdaMergedJDBCMetricsSource)
-      case "jdbc_v2" => new SparkJDBCWriter(outputWriterConfig.clientConfig, cdaMergedJDBCMetricsSource)
+      case "jdbc"    => new JdbcOutputWriter(outputWriterConfig.clientConfig, cdaMergedJDBCMetricsSource, outputWriterConfig)
+      case "jdbc_v2" => new SparkJDBCWriter(outputWriterConfig.clientConfig, cdaMergedJDBCMetricsSource, outputWriterConfig)
       case _         => throw new UnsupportedOperationException(s"Target type `$targetType` is not supported.")
     }
   }

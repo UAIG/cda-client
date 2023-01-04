@@ -19,8 +19,9 @@ import java.sql.Connection
 import java.sql.DriverManager
 import java.sql.PreparedStatement
 import java.sql.SQLException
+import java.time.{Duration, Instant}
 import java.util
-import java.util.{Collections, Locale}
+import java.util.{Calendar, Collections, Locale, TimeZone}
 import scala.collection.JavaConverters.asScalaIteratorConverter
 import scala.collection.mutable
 import scala.util.Failure
@@ -43,7 +44,7 @@ case class JdbcUpdateResult(updateStatementCount: Long, updatedRowCount: Long) {
 
 case class MicroBatchUpdateResult(insertResult: JdbcUpdateResult, updateResult: JdbcUpdateResult, deleteResult: JdbcUpdateResult) {}
 
-private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientConfig, cdaMergedJDBCMetricsSource: MergedJDBCMetricsSource) extends OutputWriter {
+private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientConfig, cdaMergedJDBCMetricsSource: MergedJDBCMetricsSource, outputWriterConfig: OutputWriterConfig) extends OutputWriter {
 
   private[outputwriter] val configLargeTextFields: Set[String] = Option(clientConfig.outputSettings.largeTextFields).getOrElse("").replaceAll(" ", "").toLowerCase(Locale.US).split(",").toSet
   private val DEFAULT_BATCH_SIZE: Long = 5000L
@@ -787,7 +788,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
             val resultCounts = stmt.executeBatch()
             checkForFailedUpdate(statementHints, rowCount, resultCounts)
             totalRowsUpdatedCount += resultCounts.sum
-            log.info(s"$jdbcWriteType - executeBatch - ${rowCount.toString} rows${if (clientConfig.jdbcConnectionMerged.logStatement) s" - $updateStmt" else ""}")
+            log.info(s"$jdbcWriteType - executeBatch - ${rowCount.toString} rows for table: ${table}, timestamp: ${tableDataFrameWrapperForMicroBatch.folderTimestamp}${if (clientConfig.jdbcConnectionMerged.logStatement) s" - $updateStmt" else ""}")
             rowCount = 0
             if (clientConfig.metricsSettings.logUnaffectedUpdates) {
               statementHints.clear()
@@ -800,7 +801,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
           val resultCounts = stmt.executeBatch()
           totalRowsUpdatedCount += resultCounts.sum
           checkForFailedUpdate(statementHints, rowCount, resultCounts)
-          log.info(s"$jdbcWriteType - executeBatch - ${rowCount.toString} rows${if (clientConfig.jdbcConnectionMerged.logStatement) s" - $updateStmt" else ""}")
+          log.info(s"$jdbcWriteType - executeBatch - ${rowCount.toString} rows for table: ${table}, timestamp: ${tableDataFrameWrapperForMicroBatch.folderTimestamp}${if (clientConfig.jdbcConnectionMerged.logStatement) s" - $updateStmt" else ""}")
         }
       } finally {
         stmt.close()
@@ -911,10 +912,12 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
         stmt.setBytes(colPos, row.getAs[Array[Byte]](dataPos))
     case TimestampType    =>
       (stmt: PreparedStatement, row: Row, dataPos: Int, colPos: Int) =>
-        stmt.setTimestamp(colPos, row.getAs[java.sql.Timestamp](dataPos))
+        val value: java.sql.Timestamp = row.getAs[java.sql.Timestamp](dataPos)
+        stmt.setTimestamp(colPos, value, Calendar.getInstance(outputWriterConfig.dataTimeZone))
     case DateType         =>
       (stmt: PreparedStatement, row: Row, dataPos: Int, colPos: Int) =>
-        stmt.setDate(colPos, row.getAs[java.sql.Date](dataPos))
+        val value: java.sql.Date = row.getAs[java.sql.Date](dataPos)
+        stmt.setDate(colPos, value, Calendar.getInstance(outputWriterConfig.dataTimeZone))
     case t: DecimalType   =>
       (stmt: PreparedStatement, row: Row, dataPos: Int, colPos: Int) =>
         stmt.setBigDecimal(colPos, row.getDecimal(dataPos))

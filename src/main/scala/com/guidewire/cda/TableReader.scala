@@ -18,7 +18,7 @@ import org.apache.spark.sql.functions.{lit, to_timestamp, when}
 import java.net.URI
 import java.nio.file.Paths
 import java.time.Duration
-import java.util.Locale
+import java.util.{Locale, TimeZone}
 import java.util.concurrent.atomic.AtomicInteger
 import scala.collection.JavaConversions._
 
@@ -124,7 +124,9 @@ class TableReader(clientConfig: ClientConfig) {
       val includeColumnNames = clientConfig.outputSettings.includeColumnNames
       val saveAsSingleFile = clientConfig.outputSettings.saveAsSingleFile
       val saveIntoTimestampDirectory = clientConfig.outputSettings.saveIntoTimestampDirectory
-      val outputWriterConfig = OutputWriterConfig(Paths.get(outputPath).toAbsolutePath.toUri, includeColumnNames, saveAsSingleFile, saveIntoTimestampDirectory, clientConfig)
+      val outputWriterConfig = OutputWriterConfig(Paths.get(outputPath).toAbsolutePath.toUri, includeColumnNames, saveAsSingleFile, saveIntoTimestampDirectory, clientConfig,
+        Option.apply(clientConfig.jdbcConnectionMerged.dataTimeZone).flatMap(s => Option.apply(TimeZone.getTimeZone(s))).getOrElse(TimeZone.getDefault)
+      )
       val outputWriter = OutputWriter(outputWriterConfig, cdaMergedJDBCMetricsSource)
       outputWriter.validate()
 
@@ -241,7 +243,7 @@ class TableReader(clientConfig: ClientConfig) {
             completed = true
           } catch {
             case e: Throwable =>
-              log.error(s"Copy Job FAILED for '$tableName' for fingerprint '$schemaFingerprint': $e")
+              log.error(s"Copy Job FAILED for '$tableName' for fingerprint '$schemaFingerprint': $e", e)
           } finally {
             if (completed) {
               log.info(s"Copy Job is complete for '$tableName' for fingerprint '$schemaFingerprint'; completed: ${completedNumberOfTableFingerprintPairs.incrementAndGet()} of $totalNumberOfTableFingerprintPairs tables")
