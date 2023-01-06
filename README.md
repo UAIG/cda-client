@@ -214,9 +214,10 @@ sourceLocation:
 outputLocation:
   path: ...
 savepointsLocation:
-  path: ...
+  uri: ...
 outputSettings:
   tablesToInclude: ...
+  tablesToExclude: ...
   saveIntoJdbcRaw: ...
   saveIntoJdbcMerged: ...
   jdbcBatchSize: ...
@@ -244,6 +245,7 @@ jdbcConnectionMerged:
   jdbcUrl: ...
   jdbcSchema: ...
   jdbcApplyLastestUpdatesOnly: ...
+  dataTimeZone: ...
 performanceTuning:
   sparkMaster: ...
   numberOfJobsInParallelMaxCount: ...
@@ -252,6 +254,17 @@ sparkTuning:
   maxResultSize: ...
   driverMemory: ...
   executorMemory: ...
+metricsSettings:
+  batchMetricsValidationEnabled: ...
+  ignoreBatchMetricsErrors: ...
+  updateMismatchWarningsEnabled: ...
+  logUnaffectedUpdates: ...
+  sinkSettings:
+    ...
+sparkSettings:
+   ...        
+connectionPoolSettings:
+  maximumPoolSize: ...
 ~~~~
 
 </p>
@@ -274,13 +287,65 @@ sparkTuning:
 
 <dt><tt>savepointsLocation</tt></dt>
 <dd>
-<dl><dt><tt>path</tt></dt>
+<dl><dt><tt>uri</tt></dt>
 <dd>Local filesystem directory where the savepoints.json file exists. For more information on this file, see the "Savepoints file" section below.</dd></dl></dd>
+
+<dt><tt>metricsSettings</tt></dt>
+<dd>
+<dl><dt><tt>sinkSettings</tt></dt>
+<dd>Configuration properties for the Spark metrics system. Settings are being passed though to Spark config with the metrics prefix. More information about available settings can be found under https://spark.apache.org/docs/3.3.1/monitoring.html.</dd></dl>
+<dl><dt><tt>batchMetricsValidationEnabled</tt></dt>
+<dd>Enables fetching batch-metrics.json based metrics and compare batch-metrics with update results. Default: true</dd></dl>
+<dl><dt><tt>ignoreBatchMetricsErrors</tt></dt>
+<dd>Ignore errors while fetching or processing batch-metrics.json based metrics. Processing continues in case an error occurs while processing the batch-metrics; errors are logged only if enabled. Default: true</dd></dl>
+<dl><dt><tt>updateMismatchWarningsEnabled</tt></dt>
+<dd>If enabled, warnings about mismatches between statement count vs affected row count are shown. Default: true</dd></dl>
+<dl><dt><tt>logUnaffectedUpdates</tt></dt>
+<dd>If enabled, a warning message is logged for every statement that does not affect/update a row in the database. Default: true</dd></dl>
+</dd>
+
+<dt><tt>sparkSettings</tt></dt>
+<dd>
+<dl><dd>Configuration properties for Spark. The properties are passed through to the Spark configuration and override any existing configuration with the same key.</dd></dl>
+</dd>
+
+<dt><tt>connectionPoolSettings</tt></dt>
+<dd>All connection pool settings are optional. Connection pooling applis to merged JDBC connections only.</dd>
+<dd>
+<dl><dt><tt>connectionTimeout</tt></dt>
+<dd>This property controls the maximum number of milliseconds that a client (that's you) will wait for a connection from the pool. If this time is exceeded without a connection becoming available, a SQLException will be thrown. Lowest acceptable connection timeout is 250 ms. Default: 30000 (30 seconds)</dd></dl>
+<dl><dt><tt>idleTimeout</tt></dt>
+<dd>This property controls the maximum amount of time that a connection is allowed to sit idle in the pool. This setting only applies when minimumIdle is defined to be less than maximumPoolSize. Idle connections will not be retired once the pool reaches minimumIdle connections. Whether a connection is retired as idle or not is subject to a maximum variation of +30 seconds, and average variation of +15 seconds. A connection will never be retired as idle before this timeout. A value of 0 means that idle connections are never removed from the pool. The minimum allowed value is 10000ms (10 seconds). Default: 600000 (10 minutes)</dd></dl>
+<dl><dt><tt>keepaliveTime</tt></dt>
+<dd>This property controls how frequently HikariCP will attempt to keep a connection alive, in order to prevent it from being timed out by the database or network infrastructure. This value must be less than the maxLifetime value. A "keepalive" will only occur on an idle connection. When the time arrives for a "keepalive" against a given connection, that connection will be removed from the pool, "pinged", and then returned to the pool. The 'ping' is one of either: invocation of the JDBC4 isValid() method, or execution of the connectionTestQuery. Typically, the duration out-of-the-pool should be measured in single digit milliseconds or even sub-millisecond, and therefore should have little or no noticeable performance impact. The minimum allowed value is 30000ms (30 seconds), but a value in the range of minutes is most desirable. Default: 0 (disabled)</dd></dl>
+<dl><dt><tt>maxLifetime</tt></dt>
+<dd>This property controls the maximum lifetime of a connection in the pool. An in-use connection will never be retired, only when it is closed will it then be removed. On a connection-by-connection basis, minor negative attenuation is applied to avoid mass-extinction in the pool. We strongly recommend setting this value, and it should be several seconds shorter than any database or infrastructure imposed connection time limit. A value of 0 indicates no maximum lifetime (infinite lifetime), subject of course to the idleTimeout setting. The minimum allowed value is 30000ms (30 seconds). Default: 1800000 (30 minutes)</dd></dl>
+<dl><dt><tt>connectionTestQuery</tt></dt>
+<dd>If your driver supports JDBC4 we strongly recommend not setting this property. This is for "legacy" drivers that do not support the JDBC4 Connection.isValid() API. This is the query that will be executed just before a connection is given to you from the pool to validate that the connection to the database is still alive. Again, try running the pool without this property, HikariCP will log an error if your driver is not JDBC4 compliant to let you know. Default: none</dd></dl>
+<dl><dt><tt>minimumIdle</tt></dt>
+<dd>This property controls the minimum number of idle connections that HikariCP tries to maintain in the pool. If the idle connections dip below this value and total connections in the pool are less than maximumPoolSize, HikariCP will make a best effort to add additional connections quickly and efficiently. However, for maximum performance and responsiveness to spike demands, we recommend not setting this value and instead allowing HikariCP to act as a fixed size connection pool. Default: same as maximumPoolSize</dd></dl>
+<dl><dt><tt>maximumPoolSize</tt></dt>
+<dd>This property controls the maximum size that the pool is allowed to reach, including both idle and in-use connections. Basically this value will determine the maximum number of actual connections to the database backend. A reasonable value for this is best determined by your execution environment. When the pool reaches this size, and no idle connections are available, calls to getConnection() will block for up to connectionTimeout milliseconds before timing out. Please read about pool sizing. The pool needs to large enough to supply connections to all parallel jobs. Default: 10</dd></dl>
+<dl><dt><tt>connectionInitSql</tt></dt>
+<dd>This property sets a SQL statement that will be executed after every new connection creation before adding it to the pool. If this SQL is not valid or throws an exception, it will be treated as a connection failure and the standard retry logic will be followed. Default: none</dd></dl>
+<dl><dt><tt>transactionIsolation</tt></dt>
+<dd>This property controls the default transaction isolation level of connections returned from the pool. If this property is not specified, the default transaction isolation level defined by the JDBC driver is used. Only use this property if you have specific isolation requirements that are common for all queries. The value of this property is the constant name from the Connection class such as TRANSACTION_READ_COMMITTED, TRANSACTION_REPEATABLE_READ, etc. Default: driver default</dd></dl>
+<dl><dt><tt>cachePrepStmts</tt></dt>
+<dd>Controls if the prepared statement cache of the JDBC driver is activated.</dd></dl>
+<dl><dt><tt>prepStmtCacheSize</tt></dt>
+<dd>Controls the prepared statement cache size. Default: 250</dd></dl>
+<dl><dt><tt>prepStmtCacheSqlLimit</tt></dt>
+<dd>Controls the prepared state cache limit. Default: 2048</dd></dl>
+</dd>
 
 <dt><tt>outputSettings</tt></dt>
 <dd>
 <dl><dt><tt>tablesToInclude</tt></dt>
-<dd>(Should be blank by default)</dd><dd> A comma delimited list of tables to include. Leave blank or omit to include all tables in the output.  This is for testing or troubleshooting purposes only. In a Production environment there should be no values here. It is for loading one or more tables to test connectivity, reviewing individual tables in a testing scenario.</dd>
+<dd>(Should be blank by default)</dd><dd> A comma delimited list of tables to include. Leave blank or omit to include all tables in the output.  This is for testing or troubleshooting purposes only. In a Production environment there should be no values here. It is for loading one or more tables to test connectivity, reviewing individual tables in a testing scenario.</dd></dl>
+<dl><dt><tt>tablesToExclude</tt></dt>
+<dd>(Should be blank by default)</dd><dd> A comma delimited list of tables to exclude. Leave blank or omit to include all tables in the output.</dd></dl>
+<dl><dt><tt>ignoreSchemaMismatches</tt></dt>
+<dd>(Should be blank by default)</dd><dd> Controls if schema incompatibilities are ignored and data is written to tables that schema does not match the Parquet data schema. Even after setting this to true, only one fingerprint will be processed per job run.</dd></dl>
 <dt><tt>saveIntoJdbcRaw</tt></dt>
 <dd>Boolean (defaults to false)</dd><dd>Should be "true" to write data to a database in Raw format (all activities and operations included in the output). </dd>
 <dt><tt>saveIntoJdbcMerged</tt></dt>
@@ -319,7 +384,7 @@ ALTER COLUMN [column] VARCHAR2(32767) // requires MAX_STRING_SIZE Oracle paramet
 <dd>The following lists known <tt>table.column</tt> values that require "largeTextFields" inclusion. Before you run OSR, add this list to the configuration file:  
       cc_outboundrecord.content, cc_contactorigvalue.origval, pc_diagratingworksheet.diagnosticcapture, cc_note.body, bc_statementbilledworkitem.exception, bc_invoicebilledworkitem.exception, pc_outboundrecord.content, pc_datachange.externalreference, pc_datachange.gosu, bc_workflowworkitem.exception</dd>
 
-</dl></dd>
+</dl>
 
 <dt><tt>jdbcV2Connection</tt></dt>
 <dd>Optional section
@@ -357,8 +422,12 @@ ALTER COLUMN [column] VARCHAR2(32767) // requires MAX_STRING_SIZE Oracle paramet
 <dd>Connection string for database connectivity. </dd>
 <dt><tt>jdbcSchema</tt></dt>
 <dd>Database schema owner designation for tables written to the database. i.e. - 'dbo' is the default for SQL Server, 'public' is the default for PostgreSQL.</dd>
-<dt><tt>jdbcApplyLatestUpdatesOnly</tt></dt>
-<dd>Boolean (defaults to false)</dd><dd>Should be "true" for applying the latest version of a record for a given table. "false" will process all the activities for a record in the order they occurred. for CDC processing, the most recent entry for a given record is the current state of that record. this option allows the application of only that most recent activity and version of the record.</dd>
+<dt><tt>ignoreInsertIfAlreadyExists</tt></dt>
+<dd>Boolean (defaults to false)</dd><dd>If set true, inserts are not executed if a row with the same id already exists (by using SQL merge statements). </dd>
+<dt><tt>logStatement</tt></dt>
+<dd>Boolean (defaults to false)</dd><dd>If set true, the SQL statement for every executed batch is included in an info level log message.</dd>
+<dt><tt>dataTimeZone</tt></dt>
+<dd>String (defaults to UTC)</dd><dd>Time Zone ID to use for interpreting time data columns for SQL statements. This will be "UTC" for most cases, since the Parquet data uses UTC aligned timestamps. The ID for a TimeZone either an abbreviation such as "PST", a full name such as "America/Los_Angeles", or a custom ID such as "GMT-8:00". Note that the support of abbreviations is for JDK 1.1.x compatibility only and full names should be used.</dd>
 </dl></dd>
 
 <dt><tt>performanceTuning</tt></dt>
@@ -379,7 +448,7 @@ ALTER COLUMN [column] VARCHAR2(32767) // requires MAX_STRING_SIZE Oracle paramet
 <dt><tt>executorMemory</tt></dt>
 <dd>See <a href="https://spark.apache.org/docs/latest/configuration.html#application-properties">spark.executor.memory</a>.</dd>
 </dl></dd>
-</dl>
+
 
 `Warning: Boolean parameters default to "false" if they are not set.`
 </details>
@@ -507,7 +576,7 @@ As a result the config.yaml is configured as such. I'm designating the savepoint
 outputLocation:
   path: cda_client_output
 savepointsLocation:
-  path: cda_client_output
+  uri: file://cda_client_output
 outputSettings:
   includeColumnNames: false
   saveAsSingleFileCSV: true
@@ -529,4 +598,54 @@ After the OSR completes writing, the contents of cda_client_output looks like so
 Each table has a corresponding folder. The .csv file in a folder contains the table's data, and the schema.yaml contains information about the columns, namely the name, dataType, and nullable boolean for each column.
 
 When rerunning the utility, the OSR will resume from the savepoints written in the savepoints.json file from the previous. The existing .csv file is deleted, and a new .csv file containing new data will be written in its place.
+</details>
+
+## Load process metrics
+<details>
+<summary>Click to expand</summary>
+
+### Connection pool metrics
+The merged connection pool also exports metrics, more details can be found [here](https://github.com/brettwooldridge/HikariCP/wiki/Dropwizard-Metrics).
+
+| Metric | Description |
+|--------|-------------|
+| merged_connection.pool.Wait | A Timer instance collecting how long requesting threads to getConnection() are waiting for a connection (or timeout exception) from the pool. |
+| merged_connection.pool.Usage | A Histogram instance collecting how long each connection is used before being returned to the pool. This is the "out of pool" or "in-use" time. |
+| merged_connection.pool.TotalConnections | A CachedGauge, refreshed on demand at 1 second resolution, indicating the total number of connections in the pool. |
+| merged_connection.pool.IdleConnections | A CachedGauge, refreshed on demand at 1 second resolution, indicating the number of idle connections in the pool. |
+| merged_connection.pool.ActiveConnections | A CachedGauge, refreshed on demand at 1 second resolution, indicating the number of active (in-use) connections in the pool. |
+| merged_connection.pool.PendingConnections | A CachedGauge, refreshed on demand at 1 second resolution, indicating the number of threads awaiting connections from the pool. |
+
+### CDA load process metrics
+
+The CDA client collects metrics for the TableReader and additional metrics that are specific for the CDA "merged" data load process. For more information on the metrics types, see the [Dropwizard Metrics](https://metrics.dropwizard.io) documentation.
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| ReaderMetrics.batch_metrics.dropped_count | Counter | Counter for all "dropped" record counts from any batch-metrics.json that is being processed. |
+| ReaderMetrics.batch_metrics.read_count | Counter | Counter for all "read" record counts from any batch-metrics.json that is being processed. |
+| ReaderMetrics.batch_metrics.read_error_count | Counter | Counts the number of errors while fetching batch-metrics.json from S3. |
+| ReaderMetrics.batch_metrics.written_count | Counter | Counter for all "written" record counts from any batch-metrics.json that is being processed. |
+| ReaderMetrics.data.read_error_count | Counter | Counts the number of errors while fetching data from S3. |
+| ReaderMetrics.manifest.table_count | Histogram  | Histogram of number of tables found in the manifest. |
+| ReaderMetrics.table.processing_time_ms | Timer | Timer of processing time for entire tables in ms. |
+| ReaderMetrics.timestamp_folder.fetch_time_ms | Timer | Time it takes to construct a dataframe for all Parquet files within a timestamp folder. |
+| ReaderMetrics.timestamp_folder.write_time_ms | Timer | Time it takes to write records for a single timestamp folder. |
+| MergedJDBCMetrics.affected_rows.delete_mismatches | Histogram | Histogram of mismatches between executed update statements and affected rows in the database. A positive value indicates that more statements were executed than rows updated, a negative value indicates that more rows were updated than statements executed. |
+| MergedJDBCMetrics.affected_rows.insert_mismatches | Histogram | Histogram of mismatches between executed insert statements and affected rows in the database. A positive value indicates that more statements were executed than rows updated, a negative value indicates that more rows were updated than statements executed. |
+| MergedJDBCMetrics.affected_rows.update_mismatches | Histogram | Histogram of mismatches between executed update statements and affected rows in the database. A positive value indicates that more statements were executed than rows updated, a negative value indicates that more rows were updated than statements executed. |
+| MergedJDBCMetrics.batch_metrics.mismatched_rows | Histogram | Histogram of mismatches between batch-metrics.json and executed updates in a table timestamp folder. A positive value indicates that more updates were expected by the batch-metrics.json than rows updated, a negative value indicates that more rows were updated than expected by the batch-metrics.json. |
+| MergedJDBCMetrics.batch_metrics.mismatched_timestamp_folder_count | Counter | A counter for the number of table timestamp folders with batch-metrics.json row update count mismatches. |
+| MergedJDBCMetrics.batch_size | Histogram | Number of statements in executed JDBC batches. |
+| MergedJDBCMetrics.data.write_error_count | Counter | Counts the number of errors while updating the database. |
+| MergedJDBCMetrics.rows.deleted_count | Counter | Counts the number of rows that are effected in the database by executed delete statements. |
+| MergedJDBCMetrics.rows.inserted_count | Counter | Counts the number of rows that are effected in the database by executed insert statements. |
+| MergedJDBCMetrics.rows.updated_count | Counter | Counts the number of rows that are effected in the database by executed update statements. |
+| MergedJDBCMetrics.statements.alter_count | Counter | Counts the number of alter statements that are executed. |
+| MergedJDBCMetrics.statements.create_count | Counter | Counts the number of create table statements that are executed. |
+| MergedJDBCMetrics.statements.delete_count | Counter | Counts the number of delete statements that are executed. |
+| MergedJDBCMetrics.statements.insert_count | Counter | Counts the number of insert statements that are executed. |
+| MergedJDBCMetrics.statements.update_count | Counter | Counts the number of update statements that are executed. |
+| MergedJDBCMetrics.timestamp_folder.record_count | Histogram | Number of records within timestamp folders. |
+
 </details>

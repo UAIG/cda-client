@@ -3,10 +3,14 @@ package gw.cda.api.outputwriter
 import com.guidewire.cda.DataFrameWrapperForMicroBatch
 import com.guidewire.cda.config.ClientConfig
 import org.apache.logging.log4j.LogManager
+import org.apache.spark.metrics.source.MergedJDBCMetricsSource
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.SparkSession
 
-case class OutputWriterConfig(outputPath: String, includeColumnNames: Boolean, saveAsSingleFile: Boolean, saveIntoTimestampDirectory: Boolean, clientConfig: ClientConfig)
+import java.net.URI
+import java.util.TimeZone
+
+case class OutputWriterConfig(outputUri: URI, includeColumnNames: Boolean, saveAsSingleFile: Boolean, saveIntoTimestampDirectory: Boolean, clientConfig: ClientConfig, dataTimeZone: TimeZone)
 
 trait OutputWriter {
 
@@ -41,12 +45,12 @@ trait OutputWriter {
 
 object OutputWriter {
   // The apply() is like a builder, caller can create without using the 'new' keyword
-  def apply(outputWriterConfig: OutputWriterConfig): OutputWriter = {
+  def apply(outputWriterConfig: OutputWriterConfig, cdaMergedJDBCMetricsSource: MergedJDBCMetricsSource): OutputWriter = {
     val targetType: String = outputWriterConfig.clientConfig.outputSettings.exportTarget
     targetType match {
       case "file"    => FileBasedOutputWriter(outputWriterConfig)
-      case "jdbc"    => new JdbcOutputWriter(outputWriterConfig.clientConfig)
-      case "jdbc_v2" => new SparkJDBCWriter(outputWriterConfig.clientConfig)
+      case "jdbc"    => new JdbcOutputWriter(outputWriterConfig.clientConfig, cdaMergedJDBCMetricsSource, outputWriterConfig)
+      case "jdbc_v2" => new SparkJDBCWriter(outputWriterConfig.clientConfig, cdaMergedJDBCMetricsSource, outputWriterConfig)
       case _         => throw new UnsupportedOperationException(s"Target type `$targetType` is not supported.")
     }
   }

@@ -4,7 +4,20 @@ sourceLocation:
 outputLocation:
   path: <folder name>
 savepointsLocation:
-  path: <folder name>
+  uri: file://<folder name>
+metricsSettings:
+  batchMetricsValidationEnabled: true
+  ignoreBatchMetricsErrors: true
+  updateMismatchWarningsEnabled: true
+  logUnaffectedUpdates: true
+  sinkSettings:
+    '*.sink.console.class': 'org.apache.spark.metrics.sink.ConsoleSink'
+sparkSettings:
+  'spark.ui.port': 4040
+connectionPoolSettings:
+  maximumPoolSize: 100
+
+
 outputSettings:
   # tablesToInclude is a comma delimited list of tables to include. leave blank or omit to include all tables in the output.
   tablesToInclude:
@@ -65,7 +78,6 @@ jdbcConnectionMerged:
   jdbcUrl: 'jdbc:sqlserver://<host>\<instance>;databaseName=<database name>;integratedSecurity=true'
   jdbcSchema: dbo
 
-  jdbcApplyLatestUpdatesOnly: true
 #performanceTuning:
 #  numberOfJobsInParallelMaxCount: 32
 #  numberOfThreadsPerJob: 15

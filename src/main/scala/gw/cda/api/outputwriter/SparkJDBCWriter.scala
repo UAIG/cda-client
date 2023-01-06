@@ -2,6 +2,7 @@ package gw.cda.api.outputwriter
 
 import com.guidewire.cda.config.ClientConfig
 import com.guidewire.cda.DataFrameWrapperForMicroBatch
+import org.apache.spark.metrics.source.MergedJDBCMetricsSource
 import org.apache.spark.sql.jdbc.JdbcDialects
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.SaveMode
@@ -16,7 +17,7 @@ import java.sql.SQLException
  * This is going to use connection details from `jdbcV2Connection`
  * and write records to DB in raw format.
  */
-private[outputwriter] class SparkJDBCWriter(override val clientConfig: ClientConfig) extends JdbcOutputWriter(clientConfig) {
+private[outputwriter] class SparkJDBCWriter(override val clientConfig: ClientConfig, cdaMergedJDBCMetricsSource: MergedJDBCMetricsSource, outputWriterConfig: OutputWriterConfig) extends JdbcOutputWriter(clientConfig, cdaMergedJDBCMetricsSource, outputWriterConfig) {
 
   private val connectionConfig = clientConfig.jdbcV2Connection
   private val saveMode: SaveMode = connectionConfig.jdbcSaveMode match {

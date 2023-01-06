@@ -3,14 +3,14 @@ package com.guidewire.cda.specs
 import org.apache.hadoop.fs.FileSystem
 import org.apache.hadoop.fs.Path
 import org.apache.hadoop.fs.PathFilter
-import org.apache.logging.log4j.LogManager
+import org.apache.log4j.Logger
 import org.apache.spark.sql.SparkSession
 
 import scala.util.Failure
 import scala.util.Try
 
 abstract class SparkSessionProviderTestSpec extends UnitTestSpec {
-  private val logger = LogManager.getLogger
+  private val logger = Logger.getLogger(this.getClass)
   private val sparkCatalogFolderPrefix = "spark-warehouse-for-test-"
   private var hadoopFileSystem: FileSystem = _
   val sparkCatalogFolderName: String = s"$sparkCatalogFolderPrefix${System.currentTimeMillis()}"

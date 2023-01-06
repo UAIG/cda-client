@@ -4,11 +4,11 @@ sourceLocation:
 outputLocation:
   path: dummy/path
 savepointsLocation:
-  path: dummy/path
+  uri: file:///dummy/path
 outputSettings:
   exportTarget: file
   saveIntoJdbcRaw: true
-  saveIntoJdbcMerged: true
+  saveIntoJdbcMerged: false
   fileFormat: csv
   includeColumnNames: true
   saveAsSingleFile: true
@@ -26,8 +26,19 @@ jdbcConnectionMerged:
   jdbcPassword: Gw_123!
   jdbcUrl: 'jdbc:postgresql://localhost/CDA'
   jdbcSchema: public
-  jdbcApplyLatestUpdatesOnly: true
+  dataTimeZone: UTC
 # This section is optional
 # performanceTuning:
 #   numberOfJobsInParallelMaxCount: 5
 #   numberOfThreadsPerJob: 10
+metricsSettings:
+  batchMetricsValidationEnabled: true
+  ignoreBatchMetricsErrors: true
+  updateMismatchWarningsEnabled: true
+  logUnaffectedUpdates: true
+  sinkSettings:
+    '*.sink.console.class': 'org.apache.spark.metrics.sink.ConsoleSink'
+sparkSettings:
+  'spark.ui.port': 4040
+connectionPoolSettings:
+  maximumPoolSize: 100

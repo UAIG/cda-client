@@ -5,6 +5,9 @@ import gw.cda.api.utils.AWSUtils
 import gw.cda.api.utils.ObjectMapperSupplier
 
 import java.net.URI
+import java.time.ZoneId
+import java.util.TimeZone
+import scala.collection.mutable
 import scala.io.Source
 
 /*
@@ -17,9 +20,28 @@ private[cda] case class SourceLocation(bucketName: String,
 
 private[cda] case class OutputLocation(path: String)
 
-private[cda] case class SavepointsLocation(path: String)
+private[cda] case class SavepointsLocation(uri: String)
+
+private[cda] case class MetricsSettings(batchMetricsValidationEnabled: Boolean = true,
+                                        ignoreBatchMetricsErrors: Boolean = true,
+                                        logUnaffectedUpdates: Boolean = true,
+                                        updateMismatchWarningsEnabled: Boolean = true,
+                                        sinkSettings: mutable.HashMap[String, String] = new mutable.HashMap[String, String]())
+
+case class ConnectionPoolSettings(idleTimeoutMs: Long = -1L,
+                                               connectionTimeout: Long = -1L,
+                                               connectionInitSql: String = "",
+                                               connectionTestQuery: String = "",
+                                               maximumPoolSize: Int = -1,
+                                               maxLifetime: Long = -1L,
+                                               minimumIdle: Int = -1,
+                                               cachePrepStmts: Boolean = true,
+                                               prepStmtCacheSize: Int = 250,
+                                               prepStmtCacheSqlLimit: Int = 2048,
+                                               transactionIsolation: String = "")
 
 private[cda] case class OutputSettings(tablesToInclude: String,
+                                       tablesToExclude: String,
                                        saveIntoJdbcRaw: Boolean,
                                        saveIntoJdbcMerged: Boolean,
                                        exportTarget: String,
@@ -28,7 +50,8 @@ private[cda] case class OutputSettings(tablesToInclude: String,
                                        saveAsSingleFile: Boolean,
                                        saveIntoTimestampDirectory: Boolean,
                                        largeTextFields: String,
-                                       jdbcBatchSize: Long)
+                                       jdbcBatchSize: Long,
+                                       ignoreSchemaMismatches: Boolean)
 
 private[cda] case class PerformanceTuning(var numberOfJobsInParallelMaxCount: Int,
                                           var numberOfThreadsPerJob: Int,
@@ -54,7 +77,9 @@ private[cda] case class JdbcConnectionMerged(jdbcUsername: String,
                                              jdbcPassword: String,
                                              jdbcUrl: String,
                                              jdbcSchema: String,
-                                             jdbcApplyLatestUpdatesOnly: Boolean)
+                                             ignoreInsertIfAlreadyExists: Boolean,
+                                             logStatement: Boolean,
+                                             dataTimeZone: String = "UTC")
 
 case class ClientConfig(sourceLocation: SourceLocation,
                         outputLocation: OutputLocation,
@@ -64,7 +89,10 @@ case class ClientConfig(sourceLocation: SourceLocation,
                         sparkTuning: SparkTuning,
                         jdbcV2Connection: JdbcV2Connection,
                         jdbcConnectionRaw: JdbcConnectionRaw,
-                        jdbcConnectionMerged: JdbcConnectionMerged)
+                        jdbcConnectionMerged: JdbcConnectionMerged,
+                        metricsSettings: MetricsSettings = MetricsSettings(),
+                        connectionPoolSettings: ConnectionPoolSettings = ConnectionPoolSettings(),
+                        sparkSettings: mutable.HashMap[String, String] = new mutable.HashMap[String, String]())
 
 object ClientConfigReader {
 
@@ -276,13 +304,13 @@ object ClientConfigReader {
     }
 
     try {
-      require(clientConfig.savepointsLocation.path != null, "savepointsLocation.path is blank")
+      require(clientConfig.savepointsLocation.uri != null, "savepointsLocation.path is blank")
     } catch {
       case e: IllegalArgumentException => throw InvalidConfigParameterException("Config parameter is missing, or is left blank in the config file", e)
     }
 
     try {
-      require(clientConfig.savepointsLocation.path.endsWith("/") != true, "savepointsLocation.path has a trailing slash, remove it")
+      require(clientConfig.savepointsLocation.uri.endsWith("/") != true, "savepointsLocation.path has a trailing slash, remove it")
     } catch {
       case e: IllegalArgumentException => throw InvalidConfigParameterException("Config parameter has an invalid value", e)
     }
